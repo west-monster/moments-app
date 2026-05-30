@@ -10,10 +10,32 @@ enum AppTheme {
 
     static func sectionTitle(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 13, weight: .bold, design: .default))
+            .font(AppTheme.Font.eyebrow)
             .tracking(3)
             .textCase(.uppercase)
             .foregroundStyle(accent)
+    }
+
+    // MARK: - Typography
+
+    /// Centralized, Dynamic Type–aware type scale. Every size is derived from a
+    /// semantic text style, so the whole UI scales with the user's preferred
+    /// text size and stays consistent across iPhone models.
+    enum Font {
+        /// Hero titles (splash / feed headline).
+        static let hero = SwiftUI.Font.system(.largeTitle, design: .default).weight(.black)
+        /// Section eyebrow labels (e.g. "MESSAGE", "CATEGORY").
+        static let eyebrow = SwiftUI.Font.system(.subheadline, design: .default).weight(.bold)
+        /// Primary editorial message text.
+        static let message = SwiftUI.Font.system(.title3, design: .serif).weight(.semibold)
+        /// Secondary editorial / description text.
+        static let body = SwiftUI.Font.system(.body, design: .serif)
+        /// Field input text.
+        static let field = SwiftUI.Font.system(.title3, design: .serif)
+        /// Interactive chips, buttons, captions.
+        static let chip = SwiftUI.Font.system(.subheadline, design: .default).weight(.medium)
+        /// Uppercase metadata (dates, counts).
+        static let caption = SwiftUI.Font.system(.caption, design: .default).weight(.bold)
     }
 }
 

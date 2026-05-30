@@ -63,14 +63,14 @@ struct MemoryCardView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if !memory.message.isEmpty {
                     Text(memory.message)
-                        .font(.system(size: 18, weight: .semibold, design: .serif))
+                        .font(AppTheme.Font.message)
                         .foregroundStyle(AppTheme.textPrimary)
                         .lineSpacing(3)
                 }
 
                 if !memory.notes.isEmpty {
                     Text(memory.notes)
-                        .font(.system(size: 14, weight: .regular, design: .serif))
+                        .font(AppTheme.Font.body)
                         .foregroundStyle(AppTheme.textSecondary)
                         .lineSpacing(3)
                         .lineLimit(3)
@@ -80,21 +80,21 @@ struct MemoryCardView: View {
                     if let t = MemoryTag(rawValue: memory.tag), t != .none {
                         HStack(spacing: 3) {
                             Image(systemName: t.icon)
-                                .font(.system(size: 9))
+                                .font(AppTheme.Font.caption)
                             Text(t.label)
-                                .font(.system(size: 10, weight: .bold))
+                                .font(AppTheme.Font.caption)
                                 .tracking(1)
                                 .textCase(.uppercase)
                         }
                         .foregroundStyle(AppTheme.accent)
 
                         Text("·")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(AppTheme.Font.caption)
                             .foregroundStyle(AppTheme.textSecondary)
                     }
 
                     Text(memory.formattedDate)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(AppTheme.Font.caption)
                         .tracking(1.5)
                         .textCase(.uppercase)
                         .foregroundStyle(AppTheme.textSecondary)
@@ -106,7 +106,7 @@ struct MemoryCardView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .task(id: memory.persistentModelID) {
-            let fileName = memory.cloudFileName
+            let fileName = memory.imageFileName
             guard !fileName.isEmpty else { return }
             let image = await Task.detached {
                 LocalStore.shared.loadImage(named: fileName)

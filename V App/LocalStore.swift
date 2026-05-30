@@ -86,7 +86,7 @@ final class LocalStore {
         let formatter = ISO8601DateFormatter()
         let items = memories.map { m in
             ExportedMemory(
-                imageFileName: m.cloudFileName,
+                imageFileName: m.imageFileName,
                 message: m.message,
                 notes: m.notes,
                 date: formatter.string(from: m.date),

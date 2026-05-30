@@ -10,6 +10,7 @@ struct SplashView: View {
     @State private var lineWidth: CGFloat = 0
     @State private var labelOpacity: Double = 0
     @State private var chevronBounce: Bool = false
+    @State private var dragOffset: CGFloat = 0
 
     private var topLabel: String {
         isFirstLaunch ? AlbumContent.dedicatoria : String(localized: "splash.welcomeBack")
@@ -42,27 +43,40 @@ struct SplashView: View {
                     .offset(y: titleOffset)
 
                 Text("splash.tapToDiscover")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(AppTheme.Font.chip)
                     .foregroundStyle(AppTheme.textSecondary)
                     .opacity(subtitleOpacity)
                     .padding(.top, 4)
 
                 Spacer()
 
-                Image(systemName: "chevron.compact.down")
+                Image(systemName: "chevron.compact.up")
                     .font(.title2)
                     .foregroundStyle(AppTheme.textSecondary)
                     .opacity(subtitleOpacity)
-                    .offset(y: chevronBounce ? 6 : 0)
+                    .offset(y: chevronBounce ? -6 : 0)
                     .padding(.bottom, 50)
             }
             .padding(.horizontal, 24)
         }
-        .onTapGesture {
-            withAnimation(.easeOut(duration: 0.5)) {
-                showSplash = false
-            }
-        }
+        .offset(y: dragOffset)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    // Only follow upward drags.
+                    dragOffset = min(0, value.translation.height)
+                }
+                .onEnded { value in
+                    if value.translation.height < -80 {
+                        dismissSplash()
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
+        .onTapGesture { dismissSplash() }
         .onAppear {
             withAnimation(.easeOut(duration: 0.8).delay(0.2)) {
                 labelOpacity = 1
@@ -80,6 +94,12 @@ struct SplashView: View {
             withAnimation(.easeInOut(duration: 1.0).delay(1.8).repeatForever(autoreverses: true)) {
                 chevronBounce = true
             }
+        }
+    }
+
+    private func dismissSplash() {
+        withAnimation(.easeOut(duration: 0.5)) {
+            showSplash = false
         }
     }
 }

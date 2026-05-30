@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var isFirstLaunch = true
     @State private var selectedTag: MemoryTag = .none
     @State private var showExport = false
+    @State private var showMenu = false
 
     private var filteredMemories: [Memory] {
         if selectedTag == .none { return memories }
@@ -27,7 +28,7 @@ struct ContentView: View {
 
             if showSplash {
                 SplashView(showSplash: $showSplash, isFirstLaunch: isFirstLaunch)
-                    .transition(.opacity)
+                    .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(2)
             } else {
                 albumFeed
@@ -70,7 +71,7 @@ struct ContentView: View {
                                 .font(.system(size: 32, weight: .thin))
                                 .foregroundStyle(AppTheme.textSecondary)
                             Text("filter.empty")
-                                .font(.system(size: 15, weight: .regular, design: .serif))
+                                .font(AppTheme.Font.body)
                                 .foregroundStyle(AppTheme.textSecondary)
                         }
                         .padding(.vertical, 40)
@@ -103,6 +104,8 @@ struct ContentView: View {
                     .padding(.trailing, 20)
                     .padding(.bottom, 32)
             }
+
+            homeMenuOverlay
         }
         .fullScreenCover(isPresented: Binding(
             get: { selectedIndex != nil },
@@ -134,7 +137,7 @@ struct ContentView: View {
                 .frame(width: headerAppeared ? 36 : 0, height: 2)
 
             Text("feed.subtitle")
-                .font(.system(size: 38, weight: .black))
+                .font(AppTheme.Font.hero)
                 .tracking(-1.2)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(AppTheme.textPrimary)
@@ -166,11 +169,11 @@ struct ContentView: View {
                 .foregroundStyle(AppTheme.accent)
 
             Text("add.title")
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(.title2, design: .default).weight(.bold))
                 .foregroundStyle(AppTheme.textPrimary)
 
             Text("add.subtitle")
-                .font(.system(size: 15, weight: .regular, design: .serif))
+                .font(AppTheme.Font.body)
                 .foregroundStyle(AppTheme.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
@@ -180,9 +183,9 @@ struct ContentView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(AppTheme.Font.chip)
                     Text("add.button")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(AppTheme.Font.chip)
                         .tracking(0.5)
                 }
                 .foregroundColor(.white)
@@ -199,17 +202,9 @@ struct ContentView: View {
     // MARK: - Floating menu
 
     private var floatingMenu: some View {
-        Menu {
-            Button {
-                showAddSheet = true
-            } label: {
-                Label(String(localized: "add.button"), systemImage: "plus.circle")
-            }
-
-            Button {
-                showExport = true
-            } label: {
-                Label(String(localized: "export.pdf"), systemImage: "doc.richtext")
+        Button {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                showMenu = true
             }
         } label: {
             ZStack {
@@ -225,6 +220,82 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Home slide-up menu
+
+    @ViewBuilder
+    private var homeMenuOverlay: some View {
+        if showMenu {
+            ZStack(alignment: .bottom) {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture { closeMenu() }
+
+                VStack(spacing: 0) {
+                    Capsule()
+                        .fill(AppTheme.textSecondary.opacity(0.4))
+                        .frame(width: 40, height: 5)
+                        .padding(.top, 10)
+                        .padding(.bottom, 6)
+
+                    menuRow(icon: "plus.circle", title: String(localized: "add.button")) {
+                        showAddSheet = true
+                    }
+
+                    Divider().padding(.leading, 56)
+
+                    menuRow(icon: "doc.richtext", title: String(localized: "export.pdf")) {
+                        showExport = true
+                    }
+                }
+                .padding(.bottom, 12)
+                .frame(maxWidth: .infinity)
+                .background(AppTheme.background)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 16)
+                .shadow(color: .black.opacity(0.15), radius: 16, y: 6)
+                .gesture(
+                    DragGesture()
+                        .onEnded { value in
+                            if value.translation.height > 60 { closeMenu() }
+                        }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            .zIndex(20)
+        }
+    }
+
+    private func menuRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            closeMenu()
+            action()
+        } label: {
+            HStack(spacing: 16) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
+                    .frame(width: 28)
+
+                Text(title)
+                    .font(.system(.body, design: .default).weight(.medium))
+                    .foregroundStyle(AppTheme.textPrimary)
+
+                Spacer()
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+        }
+    }
+
+    private func closeMenu() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            showMenu = false
+        }
+    }
+
     // MARK: - Tag filter
 
     private var tagFilter: some View {
@@ -236,9 +307,9 @@ struct ContentView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: t.icon)
-                                .font(.system(size: 11))
+                                .font(AppTheme.Font.chip)
                             Text(t == .none ? String(localized: "filter.all") : t.label)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(AppTheme.Font.chip)
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
@@ -261,33 +332,35 @@ struct ContentView: View {
                 .padding(.horizontal, 32)
 
             Text("footer.count \(memories.count)")
-                .font(.system(size: 11, weight: .bold))
+                .font(AppTheme.Font.caption)
                 .tracking(2)
                 .textCase(.uppercase)
                 .foregroundStyle(AppTheme.textSecondary)
                 .padding(.top, 8)
 
             Text("footer.madeWith")
-                .font(.system(size: 12, weight: .medium, design: .serif))
+                .font(.system(.caption, design: .serif).weight(.medium))
                 .foregroundStyle(AppTheme.textSecondary.opacity(0.5))
                 .padding(.bottom, 100)
         }
         .padding(.top, 12)
     }
 
-    // MARK: - Import from files (recovery + manual loading)
+    // MARK: - Recovery from files
 
+    /// SwiftData is the source of truth; `memories.json` is only a recovery
+    /// snapshot used when the store comes up empty (e.g. it was reset after a
+    /// migration failure — see `V_AppApp`). Reconciling on every launch is
+    /// avoided so the two layers can't drift or fight.
     private func importFromFilesIfNeeded() {
+        guard memories.isEmpty else { return }
+
         let exported = LocalStore.shared.loadMetadata()
         guard !exported.isEmpty else { return }
 
-        let existingFileNames = Set(memories.map(\.cloudFileName))
         let formatter = ISO8601DateFormatter()
 
-        for item in exported {
-            guard !item.imageFileName.isEmpty,
-                  !existingFileNames.contains(item.imageFileName) else { continue }
-
+        for item in exported where !item.imageFileName.isEmpty {
             let memory = Memory(
                 imageFileName: item.imageFileName,
                 message: item.message,

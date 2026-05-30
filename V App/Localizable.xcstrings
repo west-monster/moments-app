@@ -680,19 +680,19 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MESSAGE"
+            "value" : "MEMORY NAME"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MENSAJE"
+            "value" : "NOMBRE DEL RECUERDO"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MESSAGE"
+            "value" : "NOM DU SOUVENIR"
           }
         }
       }

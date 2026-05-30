@@ -3,8 +3,8 @@ import UIKit
 
 struct ShareCardView: View {
     let memory: Memory
-    let image: UIImage?
     @Environment(\.dismiss) private var dismiss
+    @State private var image: UIImage?
     @State private var appeared = false
 
     var body: some View {
@@ -22,9 +22,9 @@ struct ShareCardView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "square.and.arrow.up")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(AppTheme.Font.chip)
                                 Text("share.button")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(AppTheme.Font.chip)
                                     .tracking(0.5)
                             }
                             .foregroundColor(.white)
@@ -49,6 +49,13 @@ struct ShareCardView: View {
             .onAppear {
                 withAnimation(.easeOut(duration: 0.4)) { appeared = true }
             }
+            .task {
+                let fileName = memory.imageFileName
+                guard !fileName.isEmpty else { return }
+                image = await Task.detached(priority: .userInitiated) {
+                    LocalStore.shared.loadImage(named: fileName)
+                }.value
+            }
         }
     }
 
@@ -71,7 +78,7 @@ struct ShareCardView: View {
 
                 if !memory.message.isEmpty {
                     Text(memory.message)
-                        .font(.system(size: 18, weight: .semibold, design: .serif))
+                        .font(AppTheme.Font.message)
                         .foregroundStyle(AppTheme.textPrimary)
                         .multilineTextAlignment(.center)
                         .lineSpacing(4)
@@ -79,7 +86,7 @@ struct ShareCardView: View {
 
                 if !memory.notes.isEmpty {
                     Text(memory.notes)
-                        .font(.system(size: 14, weight: .regular, design: .serif))
+                        .font(AppTheme.Font.body)
                         .foregroundStyle(AppTheme.textSecondary)
                         .multilineTextAlignment(.center)
                         .lineSpacing(3)
@@ -89,18 +96,18 @@ struct ShareCardView: View {
                 HStack(spacing: 6) {
                     if let t = MemoryTag(rawValue: memory.tag), t != .none {
                         Image(systemName: t.icon)
-                            .font(.system(size: 9))
+                            .font(AppTheme.Font.caption)
                         Text(t.label)
-                            .font(.system(size: 9, weight: .bold))
+                            .font(AppTheme.Font.caption)
                             .tracking(1)
                             .textCase(.uppercase)
 
                         Text("·")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(AppTheme.Font.caption)
                     }
 
                     Text(memory.formattedDate)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(AppTheme.Font.caption)
                         .tracking(1)
                         .textCase(.uppercase)
                 }
@@ -117,17 +124,8 @@ struct ShareCardView: View {
     // MARK: - Render & share
 
     private func shareImage() {
-        let rendered = renderStoryImage()
-        guard let rendered else { return }
-
-        let ac = UIActivityViewController(activityItems: [rendered], applicationActivities: nil)
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let root = scene.keyWindow?.rootViewController {
-            var top = root
-            while let presented = top.presentedViewController { top = presented }
-            ac.popoverPresentationController?.sourceView = top.view
-            top.present(ac, animated: true)
-        }
+        guard let rendered = renderStoryImage() else { return }
+        ShareHelper.present([rendered])
     }
 
     private func renderStoryImage() -> UIImage? {
@@ -192,7 +190,22 @@ struct ShareCardView: View {
 
             if let img = image {
                 let imgRect = CGRect(x: 0, y: 0, width: width, height: imageHeight)
-                img.draw(in: imgRect)
+                // Aspect-fill the slot and center-crop, instead of stretching.
+                ctx.cgContext.saveGState()
+                ctx.cgContext.addRect(imgRect)
+                ctx.cgContext.clip()
+                let imgAspect = img.size.width / img.size.height
+                let slotAspect = imgRect.width / imgRect.height
+                var drawRect = imgRect
+                if imgAspect > slotAspect {
+                    let drawW = imgRect.height * imgAspect
+                    drawRect = CGRect(x: imgRect.midX - drawW / 2, y: imgRect.minY, width: drawW, height: imgRect.height)
+                } else {
+                    let drawH = imgRect.width / imgAspect
+                    drawRect = CGRect(x: imgRect.minX, y: imgRect.midY - drawH / 2, width: imgRect.width, height: drawH)
+                }
+                img.draw(in: drawRect)
+                ctx.cgContext.restoreGState()
                 y = imageHeight
             }
 

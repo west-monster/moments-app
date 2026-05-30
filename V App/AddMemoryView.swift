@@ -21,6 +21,7 @@ struct AddMemoryView: View {
     @State private var cropOffsetY: CGFloat = 0.5
     @State private var dragStartX: CGFloat = 0.5
     @State private var dragStartY: CGFloat = 0.5
+    @State private var photoSide: CGFloat = 0
     var nextOrder: Int
 
     var body: some View {
@@ -32,7 +33,7 @@ struct AddMemoryView: View {
 
                     fieldCard(label: String(localized: "form.message")) {
                         TextField(String(localized: "form.message.placeholder"), text: $message, axis: .vertical)
-                            .font(.system(size: 17, weight: .regular, design: .serif))
+                            .font(AppTheme.Font.field)
                             .foregroundStyle(AppTheme.textPrimary)
                             .lineLimit(3...6)
                             .tint(AppTheme.accent)
@@ -40,7 +41,7 @@ struct AddMemoryView: View {
 
                     fieldCard(label: String(localized: "form.description")) {
                         TextField(String(localized: "form.description.placeholder"), text: $notes, axis: .vertical)
-                            .font(.system(size: 15, weight: .regular, design: .serif))
+                            .font(AppTheme.Font.field)
                             .foregroundStyle(AppTheme.textPrimary)
                             .lineLimit(3...8)
                             .tint(AppTheme.accent)
@@ -140,6 +141,10 @@ struct AddMemoryView: View {
                                     }
                                     .frame(width: side, height: side)
                                     .clipped()
+                                    .onAppear { if index == 0 { photoSide = side } }
+                                    .onChange(of: side) { _, newValue in
+                                        if index == 0 { photoSide = newValue }
+                                    }
                             }
                             .aspectRatio(1, contentMode: .fit)
                             .tag(index)
@@ -155,7 +160,8 @@ struct AddMemoryView: View {
                                 let img = images[0]
                                 let aspect = img.size.width / img.size.height
                                 let isPortrait = aspect < 1
-                                let side: CGFloat = UIScreen.main.bounds.width - 32
+                                let side = photoSide
+                                guard side > 0 else { return }
                                 let scaledW = isPortrait ? side : side * aspect
                                 let scaledH = isPortrait ? side / aspect : side
                                 let overflowX = max(scaledW - side, 0)
@@ -200,7 +206,7 @@ struct AddMemoryView: View {
                                 Image(systemName: "plus.circle")
                                     .font(.system(size: 40, weight: .thin))
                                 Text("form.choosePhotos")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AppTheme.Font.chip)
                                     .tracking(1)
                                     .textCase(.uppercase)
                             }
@@ -227,7 +233,7 @@ struct AddMemoryView: View {
     private var tagPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("form.tag")
-                .font(.system(size: 11, weight: .bold))
+                .font(AppTheme.Font.eyebrow)
                 .tracking(2)
                 .foregroundStyle(AppTheme.accent)
 
@@ -239,9 +245,9 @@ struct AddMemoryView: View {
                         } label: {
                             HStack(spacing: 5) {
                                 Image(systemName: t.icon)
-                                    .font(.system(size: 12))
+                                    .font(AppTheme.Font.chip)
                                 Text(t.label)
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AppTheme.Font.chip)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
@@ -260,7 +266,7 @@ struct AddMemoryView: View {
     private func fieldCard<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
-                .font(.system(size: 11, weight: .bold))
+                .font(AppTheme.Font.eyebrow)
                 .tracking(2)
                 .foregroundStyle(AppTheme.accent)
             content()

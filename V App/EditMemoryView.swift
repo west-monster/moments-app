@@ -44,7 +44,7 @@ struct EditMemoryView: View {
 
                     fieldCard(label: String(localized: "form.message")) {
                         TextField(String(localized: "form.message.placeholder"), text: $message, axis: .vertical)
-                            .font(.system(size: 17, weight: .regular, design: .serif))
+                            .font(AppTheme.Font.field)
                             .foregroundStyle(AppTheme.textPrimary)
                             .lineLimit(3...6)
                             .tint(AppTheme.accent)
@@ -52,7 +52,7 @@ struct EditMemoryView: View {
 
                     fieldCard(label: String(localized: "form.description")) {
                         TextField(String(localized: "form.description.placeholder"), text: $notes, axis: .vertical)
-                            .font(.system(size: 15, weight: .regular, design: .serif))
+                            .font(AppTheme.Font.field)
                             .foregroundStyle(AppTheme.textPrimary)
                             .lineLimit(3...8)
                             .tint(AppTheme.accent)
@@ -194,7 +194,7 @@ struct EditMemoryView: View {
                                 Image(systemName: "plus.circle")
                                     .font(.system(size: 40, weight: .thin))
                                 Text("form.choosePhotos")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AppTheme.Font.chip)
                                     .tracking(1)
                                     .textCase(.uppercase)
                             }
@@ -210,7 +210,7 @@ struct EditMemoryView: View {
     private var tagPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("form.tag")
-                .font(.system(size: 11, weight: .bold))
+                .font(AppTheme.Font.eyebrow)
                 .tracking(2)
                 .foregroundStyle(AppTheme.accent)
 
@@ -222,9 +222,9 @@ struct EditMemoryView: View {
                         } label: {
                             HStack(spacing: 5) {
                                 Image(systemName: t.icon)
-                                    .font(.system(size: 12))
+                                    .font(AppTheme.Font.chip)
                                 Text(t.label)
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AppTheme.Font.chip)
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
@@ -243,7 +243,7 @@ struct EditMemoryView: View {
     private func fieldCard<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
-                .font(.system(size: 11, weight: .bold))
+                .font(AppTheme.Font.eyebrow)
                 .tracking(2)
                 .foregroundStyle(AppTheme.accent)
             content()
@@ -268,7 +268,7 @@ struct EditMemoryView: View {
                 showSaveError = true
                 return
             }
-            memory.cloudFileName = mainName
+            memory.imageFileName = mainName
 
             var extras: [String] = []
             for img in images.dropFirst() {

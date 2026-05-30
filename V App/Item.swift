@@ -4,20 +4,20 @@ import UIKit
 
 @Model
 final class Memory {
-    var assetName: String = ""
-    var cloudFileName: String = ""
+    /// Stored under its previous name (`cloudFileName`) so existing libraries
+    /// migrate automatically. Holds the file name of the main image.
+    @Attribute(originalName: "cloudFileName") var imageFileName: String = ""
     var message: String = ""
     var notes: String = ""
     var date: Date = Date.now
     var order: Int = 0
-    var isBundled: Bool = false
     var cropOffsetX: Double = 0.5
     var cropOffsetY: Double = 0.5
     var tag: String = ""
     var extraImageFileNames: [String] = []
 
     init(imageFileName: String = "", message: String = "", notes: String = "", date: Date = .now, order: Int = 0, cropOffsetX: Double = 0.5, cropOffsetY: Double = 0.5, tag: String = "", extraImageFileNames: [String] = []) {
-        self.cloudFileName = imageFileName
+        self.imageFileName = imageFileName
         self.message = message
         self.notes = notes
         self.date = date
@@ -30,14 +30,14 @@ final class Memory {
 
     var allImageFileNames: [String] {
         var names: [String] = []
-        if !cloudFileName.isEmpty { names.append(cloudFileName) }
+        if !imageFileName.isEmpty { names.append(imageFileName) }
         names.append(contentsOf: extraImageFileNames)
         return names
     }
 
     var uiImage: UIImage? {
-        guard !cloudFileName.isEmpty else { return nil }
-        return LocalStore.shared.loadImage(named: cloudFileName)
+        guard !imageFileName.isEmpty else { return nil }
+        return LocalStore.shared.loadImage(named: imageFileName)
     }
 
     var allImages: [UIImage] {

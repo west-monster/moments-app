@@ -40,7 +40,7 @@ struct MemoryDetailView: View {
             } else {
                 TabView(selection: $currentIndex) {
                     ForEach(Array(memories.enumerated()), id: \.element.persistentModelID) { index, memory in
-                        singleMemoryView(memory)
+                        MemoryPageView(memory: memory)
                             .tag(index)
                     }
                 }
@@ -134,93 +134,8 @@ struct MemoryDetailView: View {
         }
         .sheet(isPresented: $showShareSheet) {
             if currentIndex < memories.count {
-                ShareCardView(memory: memories[currentIndex], image: memories[currentIndex].uiImage)
+                ShareCardView(memory: memories[currentIndex])
             }
-        }
-    }
-
-    // MARK: - Single memory page
-
-    private func singleMemoryView(_ memory: Memory) -> some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            photoCarousel(for: memory)
-
-            if !memory.message.isEmpty {
-                VStack(spacing: 10) {
-                    Rectangle()
-                        .fill(AppTheme.accent)
-                        .frame(width: 28, height: 2)
-
-                    Text(memory.message)
-                        .font(.system(size: 20, weight: .semibold, design: .serif))
-                        .foregroundStyle(AppTheme.textPrimary)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(5)
-                        .padding(.horizontal, 24)
-                }
-                .padding(.top, 24)
-            }
-
-            if !memory.notes.isEmpty {
-                Text(memory.notes)
-                    .font(.system(size: 15, weight: .regular, design: .serif))
-                    .foregroundStyle(AppTheme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-                    .padding(.horizontal, 32)
-                    .padding(.top, 12)
-            }
-
-            HStack(spacing: 6) {
-                if let t = MemoryTag(rawValue: memory.tag), t != .none {
-                    Image(systemName: t.icon)
-                        .font(.system(size: 10))
-                    Text(t.label)
-                        .font(.system(size: 11, weight: .bold))
-                        .tracking(1.5)
-                        .textCase(.uppercase)
-
-                    Text("·")
-                        .font(.system(size: 11, weight: .bold))
-                }
-
-                Text(memory.formattedDate)
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(2)
-                    .textCase(.uppercase)
-            }
-            .foregroundStyle(AppTheme.textSecondary)
-            .padding(.top, 12)
-
-            Spacer()
-        }
-    }
-
-    // MARK: - Photo carousel
-
-    @ViewBuilder
-    private func photoCarousel(for memory: Memory) -> some View {
-        let images = memory.allImages
-        if images.count > 1 {
-            TabView {
-                ForEach(Array(images.enumerated()), id: \.offset) { _, img in
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .padding(.horizontal, 12)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .automatic))
-            .frame(height: UIScreen.main.bounds.width)
-        } else if let uiImage = images.first {
-            Image(uiImage: uiImage)
-                .resizable()
-                .scaledToFit()
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .padding(.horizontal, 12)
         }
     }
 
@@ -255,6 +170,118 @@ struct MemoryDetailView: View {
             withAnimation {
                 currentIndex = max(0, memories.count - 2)
             }
+        }
+    }
+}
+
+// MARK: - Single memory page
+
+/// One page of the detail pager. Loads its photos off the main thread so
+/// swiping between memories doesn't decode full-resolution images in `body`.
+private struct MemoryPageView: View {
+    let memory: Memory
+    @State private var images: [UIImage] = []
+    @State private var pageWidth: CGFloat = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            photoCarousel
+
+            if !memory.message.isEmpty {
+                VStack(spacing: 10) {
+                    Rectangle()
+                        .fill(AppTheme.accent)
+                        .frame(width: 28, height: 2)
+
+                    Text(memory.message)
+                        .font(AppTheme.Font.message)
+                        .foregroundStyle(AppTheme.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(5)
+                        .padding(.horizontal, 24)
+                }
+                .padding(.top, 24)
+            }
+
+            if !memory.notes.isEmpty {
+                Text(memory.notes)
+                    .font(AppTheme.Font.body)
+                    .foregroundStyle(AppTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+                    .padding(.horizontal, 32)
+                    .padding(.top, 12)
+            }
+
+            HStack(spacing: 6) {
+                if let t = MemoryTag(rawValue: memory.tag), t != .none {
+                    Image(systemName: t.icon)
+                        .font(AppTheme.Font.caption)
+                    Text(t.label)
+                        .font(AppTheme.Font.caption)
+                        .tracking(1.5)
+                        .textCase(.uppercase)
+
+                    Text("·")
+                        .font(AppTheme.Font.caption)
+                }
+
+                Text(memory.formattedDate)
+                    .font(AppTheme.Font.caption)
+                    .tracking(2)
+                    .textCase(.uppercase)
+            }
+            .foregroundStyle(AppTheme.textSecondary)
+            .padding(.top, 12)
+
+            Spacer()
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { pageWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, newValue in pageWidth = newValue }
+            }
+        }
+        .task(id: memory.persistentModelID) {
+            let names = memory.allImageFileNames
+            let loaded = await Task.detached(priority: .userInitiated) {
+                names.compactMap { LocalStore.shared.loadImage(named: $0) }
+            }.value
+            images = loaded
+        }
+    }
+
+    // MARK: - Photo carousel
+
+    @ViewBuilder
+    private var photoCarousel: some View {
+        if images.count > 1 {
+            TabView {
+                ForEach(Array(images.enumerated()), id: \.offset) { _, img in
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.horizontal, 12)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .automatic))
+            .frame(height: pageWidth > 0 ? pageWidth : 360)
+        } else if let uiImage = images.first {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFit()
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 12)
+        } else {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(AppTheme.cardBackground)
+                .aspectRatio(1, contentMode: .fit)
+                .overlay { ProgressView() }
+                .padding(.horizontal, 12)
         }
     }
 }

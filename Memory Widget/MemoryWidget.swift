@@ -4,17 +4,29 @@ import UIKit
 
 private enum SharedData {
     static let appGroupID = "group.axo.V-App"
+    static let thumbnailsDirName = "WidgetThumbnails"
+
+    private static var containerURL: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
+    }
 
     static func loadMemories() -> [WidgetMemoryData] {
-        guard let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
-            return []
-        }
-        let url = groupURL.appendingPathComponent("widget_memories.json")
-        guard let data = try? Data(contentsOf: url),
+        guard let url = containerURL?.appendingPathComponent("widget_memories.json"),
+              let data = try? Data(contentsOf: url),
               let memories = try? JSONDecoder().decode([WidgetMemoryData].self, from: data) else {
             return []
         }
         return memories
+    }
+
+    static func thumbnail(named name: String) -> UIImage? {
+        guard let url = containerURL?
+            .appendingPathComponent(thumbnailsDirName, isDirectory: true)
+            .appendingPathComponent(name),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return UIImage(data: data)
     }
 }
 
@@ -48,9 +60,8 @@ struct MemoryTimelineProvider: TimelineProvider {
         guard let m = memories.randomElement() else { return nil }
 
         var image: UIImage?
-        if let b64 = m.imageBase64,
-           let data = Data(base64Encoded: b64) {
-            image = UIImage(data: data)
+        if let name = m.imageFileName {
+            image = SharedData.thumbnail(named: name)
         }
 
         return MemoryEntry(date: .now, message: m.message, memoryDate: m.memoryDate, image: image, isEmpty: false)
