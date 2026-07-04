@@ -12,6 +12,10 @@ struct SplashView: View {
     @State private var chevronBounce: Bool = false
     @State private var dragOffset: CGFloat = 0
 
+    /// Keeps the hero title at its designed size while still scaling with the
+    /// user's Dynamic Type setting.
+    @ScaledMetric(relativeTo: .largeTitle) private var titleSize: CGFloat = 48
+
     private var topLabel: String {
         isFirstLaunch ? AlbumContent.dedicatoria : String(localized: "splash.welcomeBack")
     }
@@ -34,15 +38,11 @@ struct SplashView: View {
                     .fill(AppTheme.accent)
                     .frame(width: lineWidth, height: 2)
 
-                Text(mainTitle)
-                    .font(.system(size: 48, weight: .black))
-                    .tracking(-2)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(AppTheme.textPrimary)
+                HighlightHeadline(text: mainTitle, font: .system(size: titleSize, weight: .black), tracking: -2)
                     .opacity(titleOpacity)
                     .offset(y: titleOffset)
 
-                Text("splash.tapToDiscover")
+                Text("splash.swipeToDiscover")
                     .font(AppTheme.Font.chip)
                     .foregroundStyle(AppTheme.textSecondary)
                     .opacity(subtitleOpacity)

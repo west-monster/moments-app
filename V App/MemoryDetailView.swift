@@ -3,8 +3,9 @@ import SwiftData
 import UIKit
 
 struct MemoryDetailView: View {
-    @Query(sort: \Memory.order, order: .reverse) private var memories: [Memory]
+    @Query(sort: \Memory.order, order: .reverse) private var allMemories: [Memory]
     let startIndex: Int
+    let filterTag: MemoryTag
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(\.colorScheme) private var colorScheme
@@ -16,9 +17,17 @@ struct MemoryDetailView: View {
     @State private var showEditSheet = false
     @State private var showShareSheet = false
 
-    init(startIndex: Int) {
+    init(startIndex: Int, filterTag: MemoryTag = .none) {
         self.startIndex = startIndex
+        self.filterTag = filterTag
         _currentIndex = State(initialValue: startIndex)
+    }
+
+    /// The memories the pager swipes through — kept in sync with the feed's
+    /// active tag filter so it shows the same set the user tapped from.
+    private var memories: [Memory] {
+        if filterTag == .none { return allMemories }
+        return allMemories.filter { $0.tag == filterTag.rawValue }
     }
 
     private var dragProgress: CGFloat {
@@ -78,43 +87,19 @@ struct MemoryDetailView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(AppTheme.textPrimary)
-                    .frame(width: 32, height: 32)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .padding(16)
-            .opacity(contentOpacity)
+            circleButton("xmark", color: AppTheme.textPrimary) { dismiss() }
+                .padding(10)
+                .opacity(contentOpacity)
         }
-        .overlay(alignment: .topLeading) {
-            HStack(spacing: 10) {
-                Button { showDeleteConfirmation = true } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.red)
-                        .frame(width: 32, height: 32)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-
-                Button { showEditSheet = true } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                        .frame(width: 32, height: 32)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-
-                Button { showShareSheet = true } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                        .frame(width: 32, height: 32)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
+        .overlay(alignment: .bottom) {
+            // Bottom-centered so iPadOS window controls (top corners) can't
+            // cover it, and the actions stay thumb-reachable on iPhone.
+            HStack(spacing: 12) {
+                circleButton("trash", color: .red) { showDeleteConfirmation = true }
+                circleButton("pencil", color: AppTheme.accent) { showEditSheet = true }
+                circleButton("square.and.arrow.up", color: AppTheme.accent) { showShareSheet = true }
             }
-            .padding(16)
+            .padding(.bottom, 20)
             .opacity(contentOpacity)
         }
         .confirmationDialog(
@@ -130,29 +115,38 @@ struct MemoryDetailView: View {
         .sheet(isPresented: $showEditSheet) {
             if currentIndex < memories.count {
                 EditMemoryView(memory: memories[currentIndex])
+                    .presentationSizing(.page)
             }
         }
         .sheet(isPresented: $showShareSheet) {
             if currentIndex < memories.count {
                 ShareCardView(memory: memories[currentIndex])
+                    .presentationSizing(.page)
             }
+        }
+    }
+
+    /// Circular glass action button with a 48×48pt tap target around a 40pt
+    /// visual circle (HIG minimum is 44pt).
+    private func circleButton(_ icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 40, height: 40)
+                .background(.ultraThinMaterial, in: Circle())
+                .frame(width: 48, height: 48)
+                .contentShape(Circle())
         }
     }
 
     // MARK: - Page indicator
 
     private var pageIndicator: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<memories.count, id: \.self) { i in
-                Capsule()
-                    .fill(i == currentIndex ? AppTheme.accent : Color.white.opacity(0.5))
-                    .frame(width: i == currentIndex ? 20 : 6, height: 6)
-                    .animation(.spring(response: 0.3), value: currentIndex)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
+        PhotoPageIndicator(count: memories.count, current: currentIndex, inactiveColor: .white.opacity(0.5))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
     }
 
     // MARK: - Delete
@@ -181,7 +175,15 @@ struct MemoryDetailView: View {
 private struct MemoryPageView: View {
     let memory: Memory
     @State private var images: [UIImage] = []
-    @State private var pageWidth: CGFloat = 0
+    @State private var photoIndex = 0
+    @State private var pageSize: CGSize = .zero
+
+    /// Photo block height: the square that fits the width on iPhone, capped
+    /// by a fraction of the height so iPad/Mac landscape never overflows.
+    private var carouselHeight: CGFloat {
+        guard pageSize != .zero else { return 360 }
+        return min(pageSize.width, AppTheme.Layout.contentMaxWidth, pageSize.height * 0.55)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -236,13 +238,17 @@ private struct MemoryPageView: View {
             .foregroundStyle(AppTheme.textSecondary)
             .padding(.top, 12)
 
-            Spacer()
+            // Keeps the date clear of the floating action buttons at the
+            // bottom of the pager.
+            Spacer(minLength: 88)
         }
+        .frame(maxWidth: AppTheme.Layout.contentMaxWidth)
+        .frame(maxWidth: .infinity)
         .background {
             GeometryReader { proxy in
                 Color.clear
-                    .onAppear { pageWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, newValue in pageWidth = newValue }
+                    .onAppear { pageSize = proxy.size }
+                    .onChange(of: proxy.size) { _, newValue in pageSize = newValue }
             }
         }
         .task(id: memory.persistentModelID) {
@@ -256,32 +262,46 @@ private struct MemoryPageView: View {
 
     // MARK: - Photo carousel
 
+    /// Every photo renders as the same-size square using its stored crop, so
+    /// the pager feels like uniform album pages instead of jumping between
+    /// aspect ratios.
     @ViewBuilder
     private var photoCarousel: some View {
+        let side = carouselHeight
         if images.count > 1 {
-            TabView {
-                ForEach(Array(images.enumerated()), id: \.offset) { _, img in
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .padding(.horizontal, 12)
+            VStack(spacing: 10) {
+                TabView(selection: $photoIndex) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { index, img in
+                        croppedPhoto(img, index: index, side: side)
+                            .tag(index)
+                    }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(width: side, height: side)
+
+                PhotoPageIndicator(count: images.count, current: photoIndex)
             }
-            .tabViewStyle(.page(indexDisplayMode: .automatic))
-            .frame(height: pageWidth > 0 ? pageWidth : 360)
         } else if let uiImage = images.first {
-            Image(uiImage: uiImage)
-                .resizable()
-                .scaledToFit()
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .padding(.horizontal, 12)
+            croppedPhoto(uiImage, index: 0, side: side)
         } else {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(AppTheme.cardBackground)
-                .aspectRatio(1, contentMode: .fit)
+                .frame(width: side, height: side)
                 .overlay { ProgressView() }
-                .padding(.horizontal, 12)
         }
+    }
+
+    private func croppedPhoto(_ img: UIImage, index: Int, side: CGFloat) -> some View {
+        let crop = SquareCropGeometry(imageSize: img.size, side: side)
+        let position = memory.cropOffset(at: index)
+        return Color.clear
+            .overlay {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .offset(crop.offset(cropX: position.x, cropY: position.y))
+            }
+            .frame(width: side, height: side)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

@@ -32,7 +32,6 @@ enum WidgetDataProvider {
                 cropOffsetY: $0.cropOffsetY
             )
         }
-
         Task.detached(priority: .utility) {
             rebuild(from: snapshots)
         }
@@ -81,12 +80,16 @@ enum WidgetDataProvider {
             }
         }
 
+        // Reload the widget only when its inputs actually changed; sync now
+        // runs on every model save, and timeline reloads are budgeted by iOS.
         if let metadataURL = metadataURL(),
            let jsonData = try? JSONEncoder().encode(items) {
-            try? jsonData.write(to: metadataURL, options: .atomic)
+            let existing = try? Data(contentsOf: metadataURL)
+            if existing != jsonData {
+                try? jsonData.write(to: metadataURL, options: .atomic)
+                WidgetCenter.shared.reloadAllTimelines()
+            }
         }
-
-        WidgetCenter.shared.reloadAllTimelines()
     }
 
     // MARK: - Thumbnail rendering

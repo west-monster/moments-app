@@ -1,0 +1,34 @@
+{
+  "sourceLanguage" : "es",
+  "strings" : {
+    "watch.empty" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Moments on your iPhone to see your memories here"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abre Moments en tu iPhone para ver tus recuerdos aquí"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrez Moments sur votre iPhone pour voir vos souvenirs ici"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhoneでMomentsを開くと、ここに思い出が表示されます"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

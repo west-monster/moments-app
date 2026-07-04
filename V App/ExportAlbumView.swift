@@ -98,6 +98,8 @@ struct ExportAlbumView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
+                    .frame(maxWidth: AppTheme.Layout.formMaxWidth)
+                    .frame(maxWidth: .infinity)
                 }
 
                 VStack(spacing: 8) {
@@ -125,7 +127,7 @@ struct ExportAlbumView: View {
                                 .font(.system(.headline, design: .default))
                                 .tracking(0.5)
                         }
-                        .foregroundColor(.white)
+                        .foregroundStyle(filteredMemories.isEmpty ? .white : AppTheme.onAccent)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(filteredMemories.isEmpty ? AppTheme.textSecondary : AppTheme.accent)
@@ -133,6 +135,7 @@ struct ExportAlbumView: View {
                     }
                     .disabled(filteredMemories.isEmpty || isExporting)
                     .padding(.horizontal, 20)
+                    .frame(maxWidth: AppTheme.Layout.formMaxWidth)
                     .padding(.bottom, 8)
                 }
             }

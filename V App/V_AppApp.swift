@@ -3,6 +3,12 @@ import SwiftData
 
 @main
 struct V_AppApp: App {
+    @AppStorage("appearance") private var appearance = AppTheme.Appearance.system
+
+    init() {
+        WatchSyncManager.shared.activate()
+    }
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([Memory.self])
         do {
@@ -21,6 +27,7 @@ struct V_AppApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .preferredColorScheme(appearance.colorScheme)
         }
         .modelContainer(sharedModelContainer)
     }

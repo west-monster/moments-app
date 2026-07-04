@@ -12,22 +12,14 @@ struct MemoryCardView: View {
             if let uiImage = loadedImage {
                 GeometryReader { geo in
                     let side = geo.size.width
-                    let aspect = uiImage.size.width / uiImage.size.height
-                    let isPortrait = aspect < 1
-                    let scaledW = isPortrait ? side : side * aspect
-                    let scaledH = isPortrait ? side / aspect : side
-                    let overflowX = max(scaledW - side, 0)
-                    let overflowY = max(scaledH - side, 0)
+                    let crop = SquareCropGeometry(imageSize: uiImage.size, side: side)
 
                     Color.clear
                         .overlay {
                             Image(uiImage: uiImage)
                                 .resizable()
                                 .scaledToFill()
-                                .offset(
-                                    x: overflowX * (0.5 - memory.cropOffsetX),
-                                    y: overflowY * (0.5 - memory.cropOffsetY)
-                                )
+                                .offset(crop.offset(cropX: memory.cropOffsetX, cropY: memory.cropOffsetY))
                         }
                         .frame(width: side, height: side)
                         .clipped()
@@ -64,8 +56,11 @@ struct MemoryCardView: View {
                 if !memory.message.isEmpty {
                     Text(memory.message)
                         .font(AppTheme.Font.message)
-                        .foregroundStyle(AppTheme.textPrimary)
+                        .foregroundStyle(AppTheme.onHighlight)
                         .lineSpacing(3)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(AppTheme.highlight)
                 }
 
                 if !memory.notes.isEmpty {

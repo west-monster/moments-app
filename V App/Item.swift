@@ -15,8 +15,12 @@ final class Memory {
     var cropOffsetY: Double = 0.5
     var tag: String = ""
     var extraImageFileNames: [String] = []
+    /// Square-crop position (0...1) per extra photo, aligned with
+    /// `extraImageFileNames`; missing entries mean centered.
+    var extraCropOffsetsX: [Double] = []
+    var extraCropOffsetsY: [Double] = []
 
-    init(imageFileName: String = "", message: String = "", notes: String = "", date: Date = .now, order: Int = 0, cropOffsetX: Double = 0.5, cropOffsetY: Double = 0.5, tag: String = "", extraImageFileNames: [String] = []) {
+    init(imageFileName: String = "", message: String = "", notes: String = "", date: Date = .now, order: Int = 0, cropOffsetX: Double = 0.5, cropOffsetY: Double = 0.5, tag: String = "", extraImageFileNames: [String] = [], extraCropOffsetsX: [Double] = [], extraCropOffsetsY: [Double] = []) {
         self.imageFileName = imageFileName
         self.message = message
         self.notes = notes
@@ -26,6 +30,8 @@ final class Memory {
         self.cropOffsetY = cropOffsetY
         self.tag = tag
         self.extraImageFileNames = extraImageFileNames
+        self.extraCropOffsetsX = extraCropOffsetsX
+        self.extraCropOffsetsY = extraCropOffsetsY
     }
 
     var allImageFileNames: [String] {
@@ -33,6 +39,20 @@ final class Memory {
         if !imageFileName.isEmpty { names.append(imageFileName) }
         names.append(contentsOf: extraImageFileNames)
         return names
+    }
+
+    /// Crop position for the photo at `index` in `allImageFileNames` order
+    /// (0 = cover). Centered when never adjusted.
+    func cropOffset(at index: Int) -> CGPoint {
+        if index == 0 {
+            return CGPoint(x: cropOffsetX, y: cropOffsetY)
+        }
+        let extraIndex = index - 1
+        guard extraCropOffsetsX.indices.contains(extraIndex),
+              extraCropOffsetsY.indices.contains(extraIndex) else {
+            return CGPoint(x: 0.5, y: 0.5)
+        }
+        return CGPoint(x: extraCropOffsetsX[extraIndex], y: extraCropOffsetsY[extraIndex])
     }
 
     var uiImage: UIImage? {
@@ -51,6 +71,12 @@ final class Memory {
         formatter.timeStyle = .none
         return formatter.string(from: date)
     }
+}
+
+enum MemoryLimits {
+    /// Hard cap on photos per memory. Keeps the detail carousel and the PDF
+    /// export (one memory page + overflow grid pages) manageable.
+    static let maxPhotos = 20
 }
 
 enum MemoryTag: String, CaseIterable, Identifiable {

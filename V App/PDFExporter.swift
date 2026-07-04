@@ -9,6 +9,9 @@ struct PDFMemorySnapshot {
 }
 
 enum PDFExporter {
+    /// Maximum photos drawn on a single page (2-column grid, 3 rows).
+    private static let photosPerPage = 6
+
     static func snapshots(from memories: [Memory]) -> [PDFMemorySnapshot] {
         memories.map { m in
             PDFMemorySnapshot(
@@ -28,7 +31,7 @@ enum PDFExporter {
         let pageHeight: CGFloat = 792
         let margin: CGFloat = 50
         let contentWidth = pageWidth - margin * 2
-        let accentColor = UIColor(red: 0.33, green: 0.53, blue: 1.0, alpha: 1.0)
+        let accentColor = AppTheme.accentUIColor
 
         let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight))
 
@@ -39,6 +42,19 @@ enum PDFExporter {
             for snapshot in snapshots {
                 context.beginPage()
                 drawMemoryPage(context.cgContext, snapshot: snapshot, margin: margin, contentWidth: contentWidth, accent: accentColor, w: pageWidth, h: pageHeight)
+
+                // The memory page fits at most `photosPerPage` photos next to
+                // the text; the rest flow into continuation pages of 6.
+                let overflow = Array(snapshot.images.dropFirst(photosPerPage))
+                var caption = snapshot.message.isEmpty ? snapshot.formattedDate : snapshot.message
+                caption = caption.replacingOccurrences(of: "\n", with: " ").uppercased()
+                var start = 0
+                while start < overflow.count {
+                    let chunk = Array(overflow[start..<min(start + photosPerPage, overflow.count)])
+                    context.beginPage()
+                    drawOverflowPage(context.cgContext, images: chunk, caption: caption, margin: margin, contentWidth: contentWidth, accent: accentColor, w: pageWidth, h: pageHeight)
+                    start += photosPerPage
+                }
             }
         }
 
@@ -118,7 +134,7 @@ enum PDFExporter {
             imageBlockH = imgH
             totalHeight += imgH + 30
         } else if images.count >= 2 {
-            let count = min(images.count, 6)
+            let count = min(images.count, photosPerPage)
             let gap: CGFloat = 6
             let rows = (count + 1) / 2
             let cellW = (contentWidth - gap) / 2
@@ -167,44 +183,8 @@ enum PDFExporter {
 
             y += imgH + 30
         } else if images.count >= 2 {
-            let count = min(images.count, 6)
-            let gap: CGFloat = 6
-            let cols = 2
-            let rows = (count + 1) / 2
-            let cellW = (contentWidth - gap) / 2
-            let maxGridH = h * 0.55
-            let cellH = min(cellW * 0.75, (maxGridH - gap * CGFloat(rows - 1)) / CGFloat(rows))
-
-            let gridW = CGFloat(cols) * cellW + gap
-            let startX = margin + (contentWidth - gridW) / 2
-
-            for i in 0..<count {
-                let col = i % cols
-                let row = i / cols
-                let cellX = startX + CGFloat(col) * (cellW + gap)
-                let cellY = y + CGFloat(row) * (cellH + gap)
-                let cellRect = CGRect(x: cellX, y: cellY, width: cellW, height: cellH)
-
-                ctx.saveGState()
-                UIBezierPath(roundedRect: cellRect, cornerRadius: 6).addClip()
-
-                let img = images[i]
-                let imgAspect = img.size.width / img.size.height
-                let cellAspect = cellW / cellH
-                var drawRect: CGRect
-                if imgAspect > cellAspect {
-                    let drawH = cellH
-                    let drawW = drawH * imgAspect
-                    drawRect = CGRect(x: cellX - (drawW - cellW) / 2, y: cellY, width: drawW, height: drawH)
-                } else {
-                    let drawW = cellW
-                    let drawH = drawW / imgAspect
-                    drawRect = CGRect(x: cellX, y: cellY - (drawH - cellH) / 2, width: drawW, height: drawH)
-                }
-                img.draw(in: drawRect)
-                ctx.restoreGState()
-            }
-
+            let count = min(images.count, photosPerPage)
+            drawGrid(ctx, images: Array(images.prefix(count)), atY: y, margin: margin, contentWidth: contentWidth, maxGridH: h * 0.55)
             y += imageBlockH + 30
         }
 
@@ -223,5 +203,84 @@ enum PDFExporter {
         }
 
         (dateStr as NSString).draw(at: CGPoint(x: (w - dateSize.width) / 2, y: y), withAttributes: dateAttrs)
+    }
+
+    /// Continuation page for memories with more photos than fit on their main
+    /// page: a small caption naming the memory, then up to `photosPerPage`
+    /// photos in the same 2-column grid.
+    private static func drawOverflowPage(_ ctx: CGContext, images: [UIImage], caption: String, margin: CGFloat, contentWidth: CGFloat, accent: UIColor, w: CGFloat, h: CGFloat) {
+        let secondaryColor = UIColor(white: 0.5, alpha: 1.0)
+
+        let captionStyle = NSMutableParagraphStyle()
+        captionStyle.alignment = .center
+        captionStyle.lineBreakMode = .byTruncatingTail
+        let captionAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 10, weight: .bold),
+            .foregroundColor: secondaryColor,
+            .kern: 2,
+            .paragraphStyle: captionStyle
+        ]
+        let captionHeight: CGFloat = 14
+
+        let gridHeight = gridSize(for: images.count, contentWidth: contentWidth, maxGridH: h * 0.7)
+        let totalHeight = captionHeight + 8 + 2 + 16 + gridHeight
+        var y = max(margin, (h - totalHeight) / 2)
+
+        (caption as NSString).draw(in: CGRect(x: margin, y: y, width: contentWidth, height: captionHeight), withAttributes: captionAttrs)
+        y += captionHeight + 8
+
+        ctx.setFillColor(accent.cgColor)
+        ctx.fill(CGRect(x: w / 2 - 18, y: y, width: 36, height: 2))
+        y += 2 + 16
+
+        drawGrid(ctx, images: images, atY: y, margin: margin, contentWidth: contentWidth, maxGridH: h * 0.7)
+    }
+
+    /// Height of the 2-column grid `drawGrid` would produce for `count` photos.
+    private static func gridSize(for count: Int, contentWidth: CGFloat, maxGridH: CGFloat) -> CGFloat {
+        let gap: CGFloat = 6
+        let rows = (count + 1) / 2
+        let cellW = (contentWidth - gap) / 2
+        let cellH = min(cellW * 0.75, (maxGridH - gap * CGFloat(rows - 1)) / CGFloat(rows))
+        return CGFloat(rows) * cellH + CGFloat(rows - 1) * gap
+    }
+
+    /// 2-column grid of photo cells starting at `y`. Each photo is drawn
+    /// aspect-fit and centered inside its cell — the full image at its real
+    /// aspect ratio, as the memory's detail view shows it — never cropped.
+    private static func drawGrid(_ ctx: CGContext, images: [UIImage], atY y: CGFloat, margin: CGFloat, contentWidth: CGFloat, maxGridH: CGFloat) {
+        let gap: CGFloat = 6
+        let cols = 2
+        let rows = (images.count + 1) / 2
+        let cellW = (contentWidth - gap) / 2
+        let cellH = min(cellW * 0.75, (maxGridH - gap * CGFloat(rows - 1)) / CGFloat(rows))
+
+        let gridW = CGFloat(cols) * cellW + gap
+        let startX = margin + (contentWidth - gridW) / 2
+
+        for (i, img) in images.enumerated() {
+            let col = i % cols
+            let row = i / cols
+            let cellX = startX + CGFloat(col) * (cellW + gap)
+            let cellY = y + CGFloat(row) * (cellH + gap)
+
+            let imgAspect = img.size.width / img.size.height
+            let cellAspect = cellW / cellH
+            var drawRect: CGRect
+            if imgAspect > cellAspect {
+                let drawW = cellW
+                let drawH = drawW / imgAspect
+                drawRect = CGRect(x: cellX, y: cellY + (cellH - drawH) / 2, width: drawW, height: drawH)
+            } else {
+                let drawH = cellH
+                let drawW = drawH * imgAspect
+                drawRect = CGRect(x: cellX + (cellW - drawW) / 2, y: cellY, width: drawW, height: drawH)
+            }
+
+            ctx.saveGState()
+            UIBezierPath(roundedRect: drawRect, cornerRadius: 6).addClip()
+            img.draw(in: drawRect)
+            ctx.restoreGState()
+        }
     }
 }

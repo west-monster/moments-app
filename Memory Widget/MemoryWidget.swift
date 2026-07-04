@@ -28,6 +28,10 @@ private enum SharedData {
         }
         return UIImage(data: data)
     }
+
+    /// Fixed editorial accent shared with the app (mint on dark, electric
+    /// purple on light).
+    static var accentColor: Color { AccentPalette.accent }
 }
 
 // MARK: - Timeline
@@ -72,7 +76,6 @@ struct MemoryTimelineProvider: TimelineProvider {
 
 struct MemoryWidgetView: View {
     let entry: MemoryEntry
-    @Environment(\.widgetFamily) var family
 
     var body: some View {
         if entry.isEmpty {
@@ -87,16 +90,23 @@ struct MemoryWidgetView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Spacer()
 
+                Rectangle()
+                    .fill(SharedData.accentColor)
+                    .frame(width: 24, height: 2)
+
                 if !entry.message.isEmpty {
                     Text(entry.message)
-                        .font(.system(size: family == .systemLarge ? 17 : 14, weight: .semibold, design: .serif))
-                        .foregroundStyle(.primary)
+                        .font(.system(size: 14, weight: .semibold, design: .serif))
+                        .foregroundStyle(AccentPalette.onHighlight)
                         .lineLimit(3)
                         .lineSpacing(2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(AccentPalette.highlight)
                 }
 
                 Text(entry.memoryDate)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
                     .tracking(1.2)
                     .textCase(.uppercase)
                     .foregroundStyle(.secondary)
@@ -111,23 +121,17 @@ struct MemoryWidgetView: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-                    .frame(
-                        width: family == .systemLarge ? 160 : 130,
-                        height: family == .systemLarge ? 160 : 130
-                    )
+                    .frame(width: 130, height: 130)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .padding(4)
             } else {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(red: 0.33, green: 0.53, blue: 1.0).opacity(0.15))
-                    .frame(
-                        width: family == .systemLarge ? 160 : 130,
-                        height: family == .systemLarge ? 160 : 130
-                    )
+                    .fill(SharedData.accentColor.opacity(0.15))
+                    .frame(width: 130, height: 130)
                     .overlay {
                         Image(systemName: "heart.circle")
                             .font(.system(size: 28, weight: .thin))
-                            .foregroundStyle(Color(red: 0.33, green: 0.53, blue: 1.0))
+                            .foregroundStyle(SharedData.accentColor)
                     }
                     .padding(4)
             }
@@ -138,7 +142,7 @@ struct MemoryWidgetView: View {
         VStack(spacing: 8) {
             Image(systemName: "heart.circle")
                 .font(.system(size: 32, weight: .thin))
-                .foregroundStyle(Color(red: 0.33, green: 0.53, blue: 1.0))
+                .foregroundStyle(SharedData.accentColor)
 
             Text("widget.empty")
                 .font(.system(size: 13, weight: .medium, design: .serif))
@@ -146,6 +150,25 @@ struct MemoryWidgetView: View {
                 .multilineTextAlignment(.center)
         }
         .padding()
+    }
+}
+
+/// Editorial backdrop for the widget: system background with the same faint
+/// vertical grid lines as the app's `VergeGridBackground`.
+private struct WidgetGridBackground: View {
+    var body: some View {
+        ZStack {
+            Color(.systemBackground)
+            HStack(spacing: 0) {
+                ForEach(0..<3) { _ in
+                    Spacer()
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.08))
+                        .frame(width: 1)
+                }
+                Spacer()
+            }
+        }
     }
 }
 
@@ -157,11 +180,13 @@ struct MemoryWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: MemoryTimelineProvider()) { entry in
             MemoryWidgetView(entry: entry)
-                .containerBackground(.fill, for: .widget)
+                .containerBackground(for: .widget) {
+                    WidgetGridBackground()
+                }
         }
         .configurationDisplayName("widget.name")
         .description("widget.description")
-        .supportedFamilies([.systemMedium, .systemLarge])
+        .supportedFamilies([.systemMedium])
     }
 }
 

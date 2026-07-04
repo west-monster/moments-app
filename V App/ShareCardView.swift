@@ -27,7 +27,7 @@ struct ShareCardView: View {
                                     .font(AppTheme.Font.chip)
                                     .tracking(0.5)
                             }
-                            .foregroundColor(.white)
+                            .foregroundStyle(AppTheme.onAccent)
                             .padding(.horizontal, 32)
                             .padding(.vertical, 14)
                             .background(AppTheme.accent)
@@ -35,6 +35,8 @@ struct ShareCardView: View {
                         }
                     }
                     .padding(.vertical, 24)
+                    .frame(maxWidth: AppTheme.Layout.formMaxWidth)
+                    .frame(maxWidth: .infinity)
                 }
             }
             .navigationTitle(String(localized: "share.title"))
@@ -132,7 +134,7 @@ struct ShareCardView: View {
         let width: CGFloat = 1080
         let imageHeight: CGFloat = 1200
         let padding: CGFloat = 60
-        let accentColor = UIColor(red: 0.33, green: 0.53, blue: 1.0, alpha: 1.0)
+        let accentColor = AppTheme.accentUIColor
         let bgColor = UIColor.systemBackground
         let textColor = UIColor.label
         let secondaryColor = UIColor.secondaryLabel

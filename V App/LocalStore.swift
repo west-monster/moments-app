@@ -1,5 +1,22 @@
 import UIKit
 
+extension UIImage {
+    /// Aspect-preserving downscale so the longest side is at most `maxSide`;
+    /// returns `self` when already small enough. Shared by the transports
+    /// that ship photos off-device (watch sync, future exports).
+    func downscaled(maxSide: CGFloat) -> UIImage {
+        let largest = max(size.width, size.height)
+        guard largest > maxSide, largest > 0 else { return self }
+        let scale = maxSide / largest
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: newSize, format: format).image { _ in
+            draw(in: CGRect(origin: .zero, size: newSize))
+        }
+    }
+}
+
 final class LocalStore {
     static let shared = LocalStore()
 
@@ -80,6 +97,9 @@ final class LocalStore {
         let cropOffsetY: Double
         var tag: String = ""
         var extraImageFileNames: [String] = []
+        // Optional so snapshots written before per-photo crops still decode.
+        var extraCropOffsetsX: [Double]?
+        var extraCropOffsetsY: [Double]?
     }
 
     func exportMetadata(from memories: [Memory]) {
@@ -94,7 +114,9 @@ final class LocalStore {
                 cropOffsetX: m.cropOffsetX,
                 cropOffsetY: m.cropOffsetY,
                 tag: m.tag,
-                extraImageFileNames: m.extraImageFileNames
+                extraImageFileNames: m.extraImageFileNames,
+                extraCropOffsetsX: m.extraCropOffsetsX,
+                extraCropOffsetsY: m.extraCropOffsetsY
             )
         }
         let encoder = JSONEncoder()
