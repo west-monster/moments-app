@@ -1,4 +1,5 @@
 import UIKit
+import ImageIO
 
 extension UIImage {
     /// Aspect-preserving downscale so the longest side is at most `maxSide`;
@@ -24,7 +25,7 @@ final class LocalStore {
     private var cache = NSCache<NSString, UIImage>()
 
     private init() {
-        cache.countLimit = 20
+        cache.countLimit = 50
         ensureDirectories()
     }
 
@@ -79,6 +80,33 @@ final class LocalStore {
         return image
     }
 
+    /// Decodes a downsampled version straight from disk (ImageIO thumbnail), so
+    /// showing many photos at once — e.g. a memory's full carousel — never
+    /// loads them all at full resolution and runs the app out of memory (which
+    /// made photos past the first few fail to appear). For display only; the
+    /// share card and PDF export still use `loadImage` for full resolution.
+    func loadDownscaledImage(named fileName: String, maxPixel: CGFloat) -> UIImage? {
+        let key = "\(fileName)#\(Int(maxPixel))" as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+        let url = imagesURL.appendingPathComponent(fileName)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return loadImage(named: fileName)
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(maxPixel)
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return loadImage(named: fileName)
+        }
+        let image = UIImage(cgImage: cgImage)
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
     func deleteImage(named fileName: String) {
         cache.removeObject(forKey: fileName as NSString)
         let url = imagesURL.appendingPathComponent(fileName)
@@ -100,6 +128,8 @@ final class LocalStore {
         // Optional so snapshots written before per-photo crops still decode.
         var extraCropOffsetsX: [Double]?
         var extraCropOffsetsY: [Double]?
+        // Optional so snapshots written before favorites still decode.
+        var isFavorite: Bool?
     }
 
     func exportMetadata(from memories: [Memory]) {
@@ -116,7 +146,8 @@ final class LocalStore {
                 tag: m.tag,
                 extraImageFileNames: m.extraImageFileNames,
                 extraCropOffsetsX: m.extraCropOffsetsX,
-                extraCropOffsetsY: m.extraCropOffsetsY
+                extraCropOffsetsY: m.extraCropOffsetsY,
+                isFavorite: m.isFavorite
             )
         }
         let encoder = JSONEncoder()

@@ -29,8 +29,8 @@ private enum SharedData {
         return UIImage(data: data)
     }
 
-    /// Fixed editorial accent shared with the app (mint on dark, electric
-    /// purple on light).
+    /// Fixed editorial accent shared with the app (mint on dark, bright blue
+    /// on light).
     static var accentColor: Color { AccentPalette.accent }
 }
 
@@ -90,25 +90,16 @@ struct MemoryWidgetView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Spacer()
 
-                Rectangle()
-                    .fill(SharedData.accentColor)
-                    .frame(width: 24, height: 2)
-
                 if !entry.message.isEmpty {
                     Text(entry.message)
-                        .font(.system(size: 14, weight: .semibold, design: .serif))
-                        .foregroundStyle(AccentPalette.onHighlight)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
                         .lineLimit(3)
                         .lineSpacing(2)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(AccentPalette.highlight)
                 }
 
                 Text(entry.memoryDate)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .tracking(1.2)
-                    .textCase(.uppercase)
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
 
                 Spacer()
@@ -145,7 +136,7 @@ struct MemoryWidgetView: View {
                 .foregroundStyle(SharedData.accentColor)
 
             Text("widget.empty")
-                .font(.system(size: 13, weight: .medium, design: .serif))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -153,22 +144,10 @@ struct MemoryWidgetView: View {
     }
 }
 
-/// Editorial backdrop for the widget: system background with the same faint
-/// vertical grid lines as the app's `VergeGridBackground`.
-private struct WidgetGridBackground: View {
+/// White backdrop for the widget, matching the app background.
+private struct WidgetBackground: View {
     var body: some View {
-        ZStack {
-            Color(.systemBackground)
-            HStack(spacing: 0) {
-                ForEach(0..<3) { _ in
-                    Spacer()
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.08))
-                        .frame(width: 1)
-                }
-                Spacer()
-            }
-        }
+        AccentPalette.appBackground
     }
 }
 
@@ -181,8 +160,12 @@ struct MemoryWidget: Widget {
         StaticConfiguration(kind: kind, provider: MemoryTimelineProvider()) { entry in
             MemoryWidgetView(entry: entry)
                 .containerBackground(for: .widget) {
-                    WidgetGridBackground()
+                    WidgetBackground()
                 }
+                // Background is a fixed white, so pin the content to light too;
+                // otherwise semantic text colors invert on a dark home screen
+                // and the message/date become invisible.
+                .environment(\.colorScheme, .light)
         }
         .configurationDisplayName("widget.name")
         .description("widget.description")

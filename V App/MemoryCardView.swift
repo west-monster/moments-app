@@ -1,10 +1,12 @@
 import SwiftUI
+import SwiftData
 import UIKit
 
 struct MemoryCardView: View {
     let memory: Memory
     var onTap: () -> Void
 
+    @Environment(\.modelContext) private var modelContext
     @State private var loadedImage: UIImage?
 
     var body: some View {
@@ -25,7 +27,8 @@ struct MemoryCardView: View {
                         .clipped()
                 }
                 .aspectRatio(1, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(alignment: .topLeading) { heartButton }
                 .overlay(alignment: .topTrailing) {
                     if memory.allImageFileNames.count > 1 {
                         HStack(spacing: 3) {
@@ -42,9 +45,10 @@ struct MemoryCardView: View {
                     }
                 }
             } else {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(AppTheme.cardBackground)
                     .aspectRatio(1, contentMode: .fit)
+                    .overlay(alignment: .topLeading) { heartButton }
                     .overlay {
                         Image(systemName: "photo")
                             .font(.system(size: 36))
@@ -52,62 +56,69 @@ struct MemoryCardView: View {
                     }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 if !memory.message.isEmpty {
                     Text(memory.message)
-                        .font(AppTheme.Font.message)
-                        .foregroundStyle(AppTheme.onHighlight)
-                        .lineSpacing(3)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(AppTheme.highlight)
+                        .font(.headline)
+                        .foregroundStyle(AppTheme.textPrimary)
+                        .lineSpacing(2)
                 }
 
                 if !memory.notes.isEmpty {
                     Text(memory.notes)
-                        .font(AppTheme.Font.body)
+                        .font(.subheadline)
                         .foregroundStyle(AppTheme.textSecondary)
-                        .lineSpacing(3)
+                        .lineSpacing(2)
                         .lineLimit(3)
                 }
 
                 HStack(spacing: 5) {
                     if let t = MemoryTag(rawValue: memory.tag), t != .none {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 4) {
                             Image(systemName: t.icon)
-                                .font(AppTheme.Font.caption)
                             Text(t.label)
-                                .font(AppTheme.Font.caption)
-                                .tracking(1)
-                                .textCase(.uppercase)
                         }
-                        .foregroundStyle(AppTheme.accent)
 
                         Text("·")
-                            .font(AppTheme.Font.caption)
-                            .foregroundStyle(AppTheme.textSecondary)
                     }
 
                     Text(memory.formattedDate)
-                        .font(AppTheme.Font.caption)
-                        .tracking(1.5)
-                        .textCase(.uppercase)
-                        .foregroundStyle(AppTheme.textSecondary)
                 }
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.textSecondary)
             }
-            .padding(.top, 14)
-            .padding(.horizontal, 2)
+            .padding(.top, 16)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
         .task(id: memory.persistentModelID) {
             let fileName = memory.imageFileName
             guard !fileName.isEmpty else { return }
             let image = await Task.detached {
-                LocalStore.shared.loadImage(named: fileName)
+                LocalStore.shared.loadDownscaledImage(named: fileName, maxPixel: 1200)
             }.value
             loadedImage = image
         }
         .onTapGesture { onTap() }
+    }
+
+    /// Favorite toggle in the top-left corner of the photo. Its own button, so
+    /// tapping the heart doesn't open the memory.
+    private var heartButton: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.25)) {
+                memory.isFavorite.toggle()
+            }
+            try? modelContext.save()
+        } label: {
+            Image(systemName: memory.isFavorite ? "heart.fill" : "heart")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(memory.isFavorite ? .red : .white)
+                .padding(8)
+                .background(.black.opacity(0.3), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(10)
     }
 }

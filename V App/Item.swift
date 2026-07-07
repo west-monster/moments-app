@@ -19,8 +19,10 @@ final class Memory {
     /// `extraImageFileNames`; missing entries mean centered.
     var extraCropOffsetsX: [Double] = []
     var extraCropOffsetsY: [Double] = []
+    /// Marked from the card's heart button; surfaced in the Favorites tab.
+    var isFavorite: Bool = false
 
-    init(imageFileName: String = "", message: String = "", notes: String = "", date: Date = .now, order: Int = 0, cropOffsetX: Double = 0.5, cropOffsetY: Double = 0.5, tag: String = "", extraImageFileNames: [String] = [], extraCropOffsetsX: [Double] = [], extraCropOffsetsY: [Double] = []) {
+    init(imageFileName: String = "", message: String = "", notes: String = "", date: Date = .now, order: Int = 0, cropOffsetX: Double = 0.5, cropOffsetY: Double = 0.5, tag: String = "", extraImageFileNames: [String] = [], extraCropOffsetsX: [Double] = [], extraCropOffsetsY: [Double] = [], isFavorite: Bool = false) {
         self.imageFileName = imageFileName
         self.message = message
         self.notes = notes
@@ -32,6 +34,7 @@ final class Memory {
         self.extraImageFileNames = extraImageFileNames
         self.extraCropOffsetsX = extraCropOffsetsX
         self.extraCropOffsetsY = extraCropOffsetsY
+        self.isFavorite = isFavorite
     }
 
     var allImageFileNames: [String] {

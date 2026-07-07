@@ -56,12 +56,11 @@ struct TimelineRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(dayLabel)
                         .font(AppTheme.Font.caption)
-                        .tracking(1.5)
-                        .foregroundStyle(AppTheme.accent)
+                        .foregroundStyle(AppTheme.textSecondary)
 
                     if !memory.message.isEmpty {
                         Text(memory.message)
-                            .font(.system(.subheadline, design: .serif).weight(.semibold))
+                            .font(.system(.subheadline, design: .default).weight(.semibold))
                             .foregroundStyle(AppTheme.textPrimary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
@@ -71,8 +70,6 @@ struct TimelineRow: View {
                         HStack(spacing: 4) {
                             Image(systemName: tag.icon)
                             Text(tag.label)
-                                .tracking(0.5)
-                                .textCase(.uppercase)
                         }
                         .font(AppTheme.Font.caption)
                         .foregroundStyle(AppTheme.textSecondary)

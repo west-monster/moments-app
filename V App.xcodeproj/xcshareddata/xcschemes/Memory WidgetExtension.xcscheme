@@ -65,7 +65,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "5503FF332FBF313500801522"
             BuildableName = "Memory WidgetExtension.appex"
-            BlueprintName = "Memory WidgetExtension"
             ReferencedContainer = "container:V App.xcodeproj">
          </BuildableReference>
       </RemoteRunnable>

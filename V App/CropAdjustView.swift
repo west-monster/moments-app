@@ -6,6 +6,34 @@ struct PhotoCropTarget: Identifiable {
     let id: Int
 }
 
+/// Drag-and-drop reordering for a grid of identifiable items. As the dragged
+/// item passes over another, the array is reordered live.
+struct PhotoReorderDropDelegate<Item: Identifiable>: DropDelegate {
+    let item: Item
+    @Binding var items: [Item]
+    @Binding var dragged: Item?
+
+    func dropEntered(info: DropInfo) {
+        guard let dragged,
+              dragged.id != item.id,
+              let from = items.firstIndex(where: { $0.id == dragged.id }),
+              let to = items.firstIndex(where: { $0.id == item.id })
+        else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            items.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        dragged = nil
+        return true
+    }
+}
+
 /// Corner button shown on each carousel photo to open the crop editor.
 struct PhotoCropButton: View {
     let action: () -> Void

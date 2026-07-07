@@ -62,12 +62,13 @@ final class WatchSyncManager: NSObject, WCSessionDelegate {
         WCSession.default.activate()
     }
 
-    /// Call on the main actor with the current library.
+    /// Call on the main actor with the current library. Only favorited
+    /// memories are mirrored to the watch.
     func sync(_ memories: [Memory]) {
         let snapshots = memories
+            .filter { $0.isFavorite && !$0.imageFileName.isEmpty }
             .sorted { $0.order > $1.order }
             .prefix(Self.maxMemories)
-            .filter { !$0.imageFileName.isEmpty }
             .map { Snapshot(id: $0.imageFileName, message: $0.message, date: $0.formattedDate, order: $0.order) }
         stateLock.lock()
         state.snapshots = snapshots
@@ -94,9 +95,9 @@ final class WatchSyncManager: NSObject, WCSessionDelegate {
         formatter.timeStyle = .none
 
         return LocalStore.shared.loadMetadata()
+            .filter { ($0.isFavorite ?? false) && !$0.imageFileName.isEmpty }
             .sorted { $0.order > $1.order }
             .prefix(Self.maxMemories)
-            .filter { !$0.imageFileName.isEmpty }
             .map {
                 Snapshot(
                     id: $0.imageFileName,

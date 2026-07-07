@@ -3,10 +3,10 @@ import SwiftData
 import UIKit
 import Combine
 
-/// Ways to view the memory collection.
-enum FeedLayout: String {
-    case feed
-    case timeline
+/// Bottom tab bar sections. Favorites sits leftmost, but Library is the
+/// default landing tab so the app never opens on an empty favorites screen.
+private enum AppTab {
+    case favorites, library, timeline
 }
 
 /// A year's worth of memories in the timeline layout, split into months.
@@ -37,64 +37,41 @@ private struct TimelineMonthGroup: Identifiable {
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query(sort: \Memory.order, order: .reverse) private var memories: [Memory]
 
     @AppStorage("hasLaunchedBefore") private var hasLaunchedBefore = false
     @State private var showSplash = true
     @State private var showAddSheet = false
     @State private var selectedIndex: Int?
-    @State private var headerAppeared = false
     @State private var isFirstLaunch = true
     @State private var selectedTag: MemoryTag = .none
     @State private var showExport = false
-    @State private var showFilterMenu = false
-    @State private var showThemeMenu = false
-    @AppStorage("feedLayout") private var layout = FeedLayout.feed
-
-    @AppStorage("appearance") private var appearance = AppTheme.Appearance.system
-
-    @State private var topInset: CGFloat = 0
+    @State private var selectedTab: AppTab = .library
 
     private var filteredMemories: [Memory] {
         if selectedTag == .none { return memories }
         return memories.filter { $0.tag == selectedTag.rawValue }
     }
 
+    /// Favorited memories within the active category filter.
+    private var favoriteMemories: [Memory] {
+        filteredMemories.filter { $0.isFavorite }
+    }
+
     var body: some View {
         ZStack {
             AppTheme.background.ignoresSafeArea()
-            VergeGridBackground()
 
             if showSplash {
                 SplashView(showSplash: $showSplash, isFirstLaunch: isFirstLaunch)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(2)
             } else {
-                albumFeed
+                memoriesScreen
                     .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 0.6), value: showSplash)
-        .background(
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { topInset = proxy.safeAreaInsets.top }
-                    .onChange(of: proxy.safeAreaInsets.top) { _, newValue in topInset = newValue }
-            }
-        )
-        .overlay {
-            // Opaque safe-area cap sized to the status bar / notch / Dynamic
-            // Island, drawn above all content so nothing is clipped by it.
-            VStack(spacing: 0) {
-                AppTheme.background
-                    .frame(height: topInset)
-                Spacer(minLength: 0)
-            }
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-        }
         .onAppear {
             isFirstLaunch = !hasLaunchedBefore
             importFromFilesIfNeeded()
@@ -123,28 +100,34 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Feed principal
+    // MARK: - Memories screen (tab bar: Library + Timeline)
 
-    private var albumFeed: some View {
-        ZStack(alignment: .bottom) {
-            ZStack {
-                feedScroll
-                    .opacity(layout == .feed ? 1 : 0)
-                    .allowsHitTesting(layout == .feed)
+    private var memoriesScreen: some View {
+        VStack(spacing: 0) {
+            header
 
-                timelineScroll
-                    .opacity(layout == .timeline ? 1 : 0)
-                    .allowsHitTesting(layout == .timeline)
+            TabView(selection: $selectedTab) {
+                favoritesTab
+                    .tag(AppTab.favorites)
+                    .tabItem {
+                        Label(String(localized: "tab.favorites", defaultValue: "Favorites"), systemImage: "heart")
+                    }
+
+                libraryTab
+                    .tag(AppTab.library)
+                    .tabItem {
+                        Label(String(localized: "tab.library", defaultValue: "Library"), systemImage: "square.grid.2x2")
+                    }
+
+                timelineTab
+                    .tag(AppTab.timeline)
+                    .tabItem {
+                        Label(String(localized: "tab.timeline", defaultValue: "Timeline"), systemImage: "calendar")
+                    }
             }
-            .animation(.easeInOut(duration: 0.3), value: layout)
-
-            bottomToolbar
-                .padding(.bottom, 24)
-
-            filterMenuOverlay
-            themeMenuOverlay
         }
-        .fullScreenCover(isPresented: Binding(
+        .tint(AppTheme.accent)
+        .sheet(isPresented: Binding(
             get: { selectedIndex != nil },
             set: { if !$0 { selectedIndex = nil } }
         )) {
@@ -163,11 +146,12 @@ struct ContentView: View {
         }
     }
 
-    private var feedScroll: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+    // MARK: - Library tab (grid feed)
+
+    private var libraryTab: some View {
+        ScrollView(.vertical) {
             LazyVStack(spacing: 0) {
-                header
-                    .padding(.bottom, 8)
+                chipsRow
 
                 if memories.isEmpty {
                     emptyState
@@ -182,11 +166,12 @@ struct ContentView: View {
         }
     }
 
-    private var timelineScroll: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+    // MARK: - Timeline tab (chronological)
+
+    private var timelineTab: some View {
+        ScrollView(.vertical) {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                header
-                    .padding(.bottom, 8)
+                chipsRow
 
                 if memories.isEmpty {
                     emptyState
@@ -201,6 +186,120 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Favorites tab
+
+    private var favoritesTab: some View {
+        ScrollView(.vertical) {
+            LazyVStack(spacing: 0) {
+                chipsRow
+
+                if memories.isEmpty {
+                    emptyState
+                } else if favoriteMemories.isEmpty {
+                    favoritesEmptyView
+                } else {
+                    ForEach(Array(favoriteMemories.enumerated()), id: \.element.persistentModelID) { _, memory in
+                        MemoryCardView(memory: memory) {
+                            selectMemory(memory)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: AppTheme.Layout.contentMaxWidth)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var favoritesEmptyView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "heart")
+                .font(.system(size: 32, weight: .thin))
+                .foregroundStyle(AppTheme.textSecondary)
+            Text("favorites.empty")
+                .font(AppTheme.Font.body)
+                .foregroundStyle(AppTheme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.vertical, 40)
+        .padding(.horizontal, 32)
+    }
+
+    /// Category filter chips, shown on both tabs once there are memories.
+    @ViewBuilder
+    private var chipsRow: some View {
+        if !memories.isEmpty {
+            CategoryChips(selected: $selectedTag)
+                .padding(.top, 4)
+                .padding(.bottom, 12)
+        }
+    }
+
+    /// Shared header above the tab content: the app name (small, gray) over the
+    /// current section's large title. The title cross-fades (blur replace) when
+    /// the section changes. Custom (not a native large title) so the app name
+    /// can sit above the title and the change can be animated.
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("app.name")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(sectionTitle)
+                    .font(.largeTitle.bold())
+                    .foregroundStyle(.primary)
+                    .id(selectedTab)
+                    .transition(.blurReplace)
+            }
+
+            Spacer(minLength: 8)
+
+            headerButtons
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .animation(.easeInOut(duration: 0.28), value: selectedTab)
+    }
+
+    /// Large title for the active section.
+    private var sectionTitle: LocalizedStringKey {
+        switch selectedTab {
+        case .favorites: "tab.favorites"
+        case .library: "tab.library"
+        case .timeline: "tab.timeline"
+        }
+    }
+
+    /// Add (+) and an overflow menu (⋮), each inside a gray circle.
+    private var headerButtons: some View {
+        HStack(spacing: 10) {
+            Button { showAddSheet = true } label: {
+                navBarIcon("plus")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("toolbar.add"))
+
+            Menu {
+                Button { showExport = true } label: {
+                    Label("toolbar.export", systemImage: "square.and.arrow.up")
+                }
+            } label: {
+                navBarIcon("ellipsis")
+            }
+            .accessibilityLabel(Text("toolbar.more"))
+        }
+    }
+
+    /// Glyph in a gray circle (matches the mockup on iOS 18 and 26).
+    private func navBarIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(AppTheme.accent)
+            .frame(width: 38, height: 38)
+            .background(Color(.systemGray5), in: Circle())
+    }
+
     private var filterEmptyView: some View {
         VStack(spacing: 12) {
             Image(systemName: "tray")
@@ -213,26 +312,20 @@ struct ContentView: View {
         .padding(.vertical, 40)
     }
 
-    // MARK: - Feed layouts
+    // MARK: - Feed layout
 
     @ViewBuilder
     private var feedCards: some View {
-        ForEach(Array(filteredMemories.enumerated()), id: \.element.persistentModelID) { index, memory in
+        ForEach(Array(filteredMemories.enumerated()), id: \.element.persistentModelID) { _, memory in
             MemoryCardView(memory: memory) {
                 selectMemory(memory)
-            }
-
-            if index < filteredMemories.count - 1 {
-                Rectangle()
-                    .fill(AppTheme.divider)
-                    .frame(height: 1)
-                    .padding(.horizontal, 50)
-                    .padding(.vertical, 12)
             }
         }
 
         footer
     }
+
+    // MARK: - Timeline layout
 
     @ViewBuilder
     private var timelineSections: some View {
@@ -256,7 +349,7 @@ struct ContentView: View {
             }
         }
 
-        Color.clear.frame(height: 96)
+        Color.clear.frame(height: 40)
     }
 
     /// Filtered memories grouped by year, then by month, newest first.
@@ -277,8 +370,7 @@ struct ContentView: View {
 
     private func monthSubheader(_ title: String) -> some View {
         Text(title)
-            .font(AppTheme.Font.caption)
-            .tracking(2)
+            .font(.footnote)
             .foregroundStyle(AppTheme.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 46)
@@ -290,20 +382,20 @@ struct ContentView: View {
     private func timelineYearHeader(_ year: Int, count: Int) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(String(year))
-                .font(.system(.title, design: .default).weight(.black))
+                .font(.title2.weight(.bold))
                 .foregroundStyle(AppTheme.textPrimary)
 
             Text("\(count)")
-                .font(AppTheme.Font.caption)
+                .font(.footnote)
                 .foregroundStyle(AppTheme.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(AppTheme.cardBackground, in: Capsule())
+                .background(Color(.systemGray5), in: Capsule())
 
             Spacer()
         }
         .padding(.horizontal, 20)
-        .padding(.top, 14)
+        .padding(.top, 10)
         .padding(.bottom, 10)
         .background(AppTheme.background)
     }
@@ -316,40 +408,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Header
-
-    private var header: some View {
-        VStack(spacing: 14) {
-            Spacer().frame(height: 48)
-
-            AppTheme.sectionTitle(String(localized: "feed.header"))
-                .opacity(headerAppeared ? 1 : 0)
-
-            Rectangle()
-                .fill(AppTheme.accent)
-                .frame(width: headerAppeared ? 36 : 0, height: 2)
-
-            HighlightHeadline(text: String(localized: "feed.subtitle"), font: AppTheme.Font.hero, tracking: -1.2)
-                .opacity(headerAppeared ? 1 : 0)
-                .offset(y: headerAppeared ? 0 : 20)
-
-            Spacer().frame(height: 20)
-
-            if !memories.isEmpty {
-                Rectangle()
-                    .fill(AppTheme.divider)
-                    .frame(height: 1)
-                    .padding(.horizontal, 32)
-            }
-        }
-        .onAppear {
-            withAnimation(.spring(response: 0.8, dampingFraction: 0.7, blendDuration: 0).delay(0.1)) {
-                headerAppeared = true
-            }
-        }
-    }
-
-    // MARK: - Empty state (solo cuando no hay recuerdos)
+    // MARK: - Empty state (only when there are no memories at all)
 
     private var emptyState: some View {
         VStack(spacing: 14) {
@@ -358,7 +417,7 @@ struct ContentView: View {
                 .foregroundStyle(AppTheme.accent)
 
             Text("add.title")
-                .font(.system(.title2, design: .default).weight(.bold))
+                .font(.title2.weight(.bold))
                 .foregroundStyle(AppTheme.textPrimary)
 
             Text("add.subtitle")
@@ -372,214 +431,35 @@ struct ContentView: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "plus")
-                        .font(AppTheme.Font.chip)
                     Text("add.button")
-                        .font(AppTheme.Font.chip)
-                        .tracking(0.5)
                 }
-                .foregroundStyle(AppTheme.onAccent)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 12)
-                .background(AppTheme.accent)
-                .clipShape(Capsule())
+                .background(AppTheme.accent, in: Capsule())
             }
+            .buttonStyle(.plain)
             .padding(.top, 4)
         }
-        .padding(.vertical, 32)
-    }
-
-    // MARK: - Bottom toolbar
-
-    /// Editorial floating pill: solid surface with a hard 1px border instead
-    /// of translucent material; the add button is the single accent-filled
-    /// element. Compact width (iPhone) shows icons only; regular width
-    /// (iPad/Mac) adds monospaced eyebrow labels under each icon.
-    private var bottomToolbar: some View {
-        HStack(spacing: horizontalSizeClass == .regular ? 2 : 4) {
-            toolbarItem("plus", "toolbar.add", tint: AppTheme.onAccent, labelTint: AppTheme.accent, iconBackground: AppTheme.accent) {
-                showAddSheet = true
-            }
-            toolbarItem(layout == .feed ? "calendar.day.timeline.left" : "square.grid.2x2.fill", "toolbar.view") {
-                layout = layout == .feed ? .timeline : .feed
-            }
-            toolbarItem("line.3.horizontal.decrease", "toolbar.filter") { open($showFilterMenu) }
-            toolbarItem("circle.lefthalf.filled", "toolbar.theme") { open($showThemeMenu) }
-            toolbarItem("doc.richtext", "toolbar.export") { showExport = true }
-        }
-        .padding(.horizontal, horizontalSizeClass == .regular ? 10 : 6)
-        .padding(.vertical, horizontalSizeClass == .regular ? 7 : 6)
-        .background(toolbarSurface, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
-        .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 10, y: 4)
-    }
-
-    private var toolbarSurface: Color {
-        colorScheme == .dark ? Color(.secondarySystemBackground) : Color(.systemBackground)
-    }
-
-    /// Button icons take the purple highlight color in light mode, pairing
-    /// the bar with the headline blocks; in dark they stay near-white.
-    private var toolbarForeground: Color {
-        colorScheme == .dark ? AppTheme.textPrimary : AccentPalette.electricPurple
-    }
-
-    private var toolbarSecondaryForeground: Color {
-        AppTheme.textSecondary
-    }
-
-    @ViewBuilder
-    private func toolbarItem(
-        _ icon: String,
-        _ labelKey: LocalizedStringKey,
-        tint: Color? = nil,
-        labelTint: Color? = nil,
-        iconBackground: Color? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        let iconView = Image(systemName: icon)
-            .font(.system(size: horizontalSizeClass == .regular ? 19 : 17, weight: .semibold))
-            .foregroundStyle(tint ?? toolbarForeground)
-            .frame(width: 34, height: 34)
-            .background(iconBackground ?? .clear, in: Circle())
-
-        Button(action: action) {
-            if horizontalSizeClass == .regular {
-                VStack(spacing: 4) {
-                    iconView
-                    Text(labelKey)
-                        .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                        .tracking(1.5)
-                        .textCase(.uppercase)
-                        .foregroundStyle(labelTint ?? toolbarSecondaryForeground)
-                }
-                .frame(width: 80, height: 58)
-                .contentShape(Rectangle())
-            } else {
-                iconView
-                    .frame(width: 54, height: 46)
-                    .contentShape(Rectangle())
-            }
-        }
-        .buttonStyle(MenuPressStyle())
-    }
-
-    private func open(_ flag: Binding<Bool>) {
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) { flag.wrappedValue = true }
-    }
-
-    private func close(_ flag: Binding<Bool>) {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { flag.wrappedValue = false }
-    }
-
-    // MARK: - Filter slide-up menu
-
-    @ViewBuilder
-    private var filterMenuOverlay: some View {
-        if showFilterMenu {
-            SlideUpMenu(isPresented: $showFilterMenu) {
-                let tags = Array(MemoryTag.allCases.reversed())
-                VStack(spacing: 0) {
-                    ForEach(Array(tags.enumerated()), id: \.offset) { index, t in
-                        Button {
-                            withAnimation(.spring(response: 0.3)) { selectedTag = t }
-                            close($showFilterMenu)
-                        } label: {
-                            HStack(spacing: 16) {
-                                Image(systemName: t.icon)
-                                    .font(.system(size: 19, weight: .medium))
-                                    .frame(width: 28)
-
-                                Text(t == .none ? String(localized: "filter.all") : t.label)
-                                    .font(.system(.body, design: .default).weight(.medium))
-
-                                Spacer()
-
-                                if selectedTag == t {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 15, weight: .bold))
-                                        .transition(.scale.combined(with: .opacity))
-                                }
-                            }
-                            .foregroundStyle(selectedTag == t ? AppTheme.accent : AppTheme.textPrimary)
-                            .contentShape(Rectangle())
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 13)
-                        }
-                        .buttonStyle(MenuPressStyle())
-                        .staggered(index)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Theme slide-up menu
-
-    @ViewBuilder
-    private var themeMenuOverlay: some View {
-        if showThemeMenu {
-            SlideUpMenu(isPresented: $showThemeMenu) {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(String(localized: "theme.appearance", defaultValue: "Appearance"))
-                        .font(AppTheme.Font.eyebrow)
-                        .tracking(2)
-                        .foregroundStyle(AppTheme.accent)
-                        .staggered(0)
-
-                    HStack(spacing: 10) {
-                        ForEach(Array(AppTheme.Appearance.allCases.enumerated()), id: \.offset) { index, mode in
-                            Button {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { appearance = mode }
-                            } label: {
-                                VStack(spacing: 6) {
-                                    Image(systemName: mode.icon)
-                                        .font(.system(size: 20, weight: .medium))
-                                    Text(mode.label)
-                                        .font(AppTheme.Font.chip)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .foregroundStyle(appearance == mode ? AppTheme.onAccent : AppTheme.textPrimary)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .fill(appearance == mode ? AppTheme.accent : AppTheme.cardBackground)
-                                )
-                            }
-                            .buttonStyle(MenuPressStyle())
-                            .staggered(index + 1)
-                        }
-                    }
-
-                }
-                .padding(.horizontal, 22)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
-            }
-        }
+        .padding(.vertical, 60)
     }
 
     // MARK: - Footer
 
     private var footer: some View {
-        VStack(spacing: 10) {
-            Rectangle()
-                .fill(AppTheme.divider)
-                .frame(height: 1)
-                .padding(.horizontal, 32)
-
+        VStack(spacing: 4) {
             Text("footer.count \(memories.count)")
-                .font(AppTheme.Font.caption)
-                .tracking(2)
-                .textCase(.uppercase)
+                .font(.footnote)
                 .foregroundStyle(AppTheme.textSecondary)
-                .padding(.top, 8)
 
             Text("footer.madeWith")
-                .font(.system(.caption, design: .serif).weight(.medium))
-                .foregroundStyle(AppTheme.textSecondary.opacity(0.5))
-                .padding(.bottom, 100)
+                .font(.footnote)
+                .foregroundStyle(AppTheme.textSecondary.opacity(0.6))
         }
-        .padding(.top, 12)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 24)
+        .padding(.bottom, 48)
     }
 
     // MARK: - Recovery from files
@@ -608,7 +488,8 @@ struct ContentView: View {
                 tag: item.tag,
                 extraImageFileNames: item.extraImageFileNames,
                 extraCropOffsetsX: item.extraCropOffsetsX ?? [],
-                extraCropOffsetsY: item.extraCropOffsetsY ?? []
+                extraCropOffsetsY: item.extraCropOffsetsY ?? [],
+                isFavorite: item.isFavorite ?? false
             )
             modelContext.insert(memory)
         }
@@ -623,123 +504,53 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Category chips
+
+/// Horizontal, scrollable row of category filter chips that scales past a
+/// segmented control's few slots. One typographic family; color appears only
+/// on the active chip (system tint), everything else in label/secondary. No
+/// dividers or shadows; respects Dynamic Type and the system accent color.
+///
+/// The app's category type is `MemoryTag` (already `String, CaseIterable,
+/// Identifiable`), so the chips bind to it directly instead of a parallel
+/// `Category` enum disconnected from the stored data.
+struct CategoryChips: View {
+    @Binding var selected: MemoryTag
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(MemoryTag.allCases) { category in
+                    chip(category)
+                }
+            }
+            // Padding lives on the content (not the ScrollView) so the first
+            // chip aligns with the layout margin while chips still scroll
+            // edge-to-edge.
+            .padding(.horizontal)
+        }
+        .sensoryFeedback(.selection, trigger: selected)
+    }
+
+    private func chip(_ category: MemoryTag) -> some View {
+        let isSelected = selected == category
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) { selected = category }
+        } label: {
+            Text(category == .none ? String(localized: "filter.all") : category.label)
+                .font(.subheadline.weight(isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .padding(.horizontal, 15)
+                .padding(.vertical, 7)
+                .background {
+                    Capsule().fill(isSelected ? AppTheme.accent : Color(.systemGray5))
+                }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 #Preview {
     ContentView()
         .modelContainer(for: Memory.self, inMemory: true)
-}
-
-// MARK: - Slide-up container
-
-/// Dimmed backdrop + bottom sheet with an interactive drag-to-dismiss that
-/// follows the finger, plus a rubber-band spring when released below the
-/// dismiss threshold. The sheet's contents animate in via the `.staggered`
-/// modifier applied by callers.
-private struct SlideUpMenu<Content: View>: View {
-    @Binding var isPresented: Bool
-    private let content: Content
-
-    @State private var dragY: CGFloat = 0
-
-    init(isPresented: Binding<Bool>, @ViewBuilder content: () -> Content) {
-        self._isPresented = isPresented
-        self.content = content()
-    }
-
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.black
-                .opacity(0.35 * (1 - dragProgress))
-                .ignoresSafeArea()
-                .transition(.opacity)
-                .onTapGesture { close() }
-
-            VStack(spacing: 0) {
-                Capsule()
-                    .fill(AppTheme.textSecondary.opacity(0.4))
-                    .frame(width: 40, height: 5)
-                    .padding(.top, 10)
-                    .padding(.bottom, 4)
-
-                content
-            }
-            .padding(.bottom, 12)
-            .frame(maxWidth: AppTheme.Layout.formMaxWidth)
-            .background(AppTheme.background)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(AppTheme.divider, lineWidth: 0.5)
-            )
-            .padding(.horizontal, 12)
-            .padding(.bottom, 16)
-            .offset(y: dragY)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        // Follow downward drags 1:1; rubber-band upward pulls.
-                        dragY = value.translation.height > 0
-                            ? value.translation.height
-                            : value.translation.height / 4
-                    }
-                    .onEnded { value in
-                        if value.translation.height > 90 || value.predictedEndTranslation.height > 200 {
-                            close()
-                        } else {
-                            withAnimation(.spring(response: 0.32, dampingFraction: 0.7)) { dragY = 0 }
-                        }
-                    }
-            )
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
-        .zIndex(20)
-    }
-
-    private var dragProgress: CGFloat {
-        min(max(dragY, 0) / 400, 1)
-    }
-
-    private func close() {
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.85)) {
-            isPresented = false
-        }
-    }
-}
-
-// MARK: - Staggered reveal
-
-/// Fades and lifts a view into place with a delay proportional to its index,
-/// producing a cascading reveal for menu rows.
-private struct StaggeredItem: ViewModifier {
-    let index: Int
-    @State private var shown = false
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 10)
-            .onAppear {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.85).delay(Double(index) * 0.03)) {
-                    shown = true
-                }
-            }
-            .onDisappear { shown = false }
-    }
-}
-
-private extension View {
-    func staggered(_ index: Int) -> some View {
-        modifier(StaggeredItem(index: index))
-    }
-}
-
-// MARK: - Press feedback
-
-/// Subtle scale + dim while a menu row / control is held.
-private struct MenuPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .opacity(configuration.isPressed ? 0.65 : 1)
-            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
-    }
 }
