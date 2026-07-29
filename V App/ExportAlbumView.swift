@@ -31,7 +31,7 @@ struct ExportAlbumView: View {
                     VStack(spacing: 20) {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("export.select")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(AppTheme.Font.eyebrow)
                                 .tracking(2)
                                 .foregroundStyle(AppTheme.accent)
 
@@ -78,7 +78,7 @@ struct ExportAlbumView: View {
                                 }
                             } label: {
                                 Text("export.selectAll")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AppTheme.Font.chip)
                                     .foregroundStyle(AppTheme.accent)
                             }
 
@@ -91,13 +91,15 @@ struct ExportAlbumView: View {
                                 }
                             } label: {
                                 Text("export.selectNone")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AppTheme.Font.chip)
                                     .foregroundStyle(AppTheme.textSecondary)
                             }
                         }
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
+                    .frame(maxWidth: AppTheme.Layout.formMaxWidth)
+                    .frame(maxWidth: .infinity)
                 }
 
                 VStack(spacing: 8) {
@@ -106,7 +108,7 @@ struct ExportAlbumView: View {
                         .frame(height: 1)
 
                     Text("export.count \(filteredMemories.count)")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(AppTheme.Font.chip)
                         .foregroundStyle(AppTheme.textSecondary)
                         .padding(.top, 4)
 
@@ -119,13 +121,13 @@ struct ExportAlbumView: View {
                                     .tint(.white)
                             } else {
                                 Image(systemName: "doc.richtext")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(AppTheme.Font.chip)
                             }
                             Text("export.pdf")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.system(.headline, design: .default))
                                 .tracking(0.5)
                         }
-                        .foregroundColor(.white)
+                        .foregroundStyle(filteredMemories.isEmpty ? .white : AppTheme.onAccent)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(filteredMemories.isEmpty ? AppTheme.textSecondary : AppTheme.accent)
@@ -133,6 +135,7 @@ struct ExportAlbumView: View {
                     }
                     .disabled(filteredMemories.isEmpty || isExporting)
                     .padding(.horizontal, 20)
+                    .frame(maxWidth: AppTheme.Layout.formMaxWidth)
                     .padding(.bottom, 8)
                 }
             }
@@ -165,13 +168,13 @@ struct ExportAlbumView: View {
                 .frame(width: 20)
 
             Text(label)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(.body, design: .default).weight(.medium))
                 .foregroundStyle(AppTheme.textPrimary)
 
             Spacer()
 
             Text("\(count)")
-                .font(.system(size: 13, weight: .semibold))
+                .font(AppTheme.Font.caption)
                 .foregroundStyle(AppTheme.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -189,18 +192,9 @@ struct ExportAlbumView: View {
             let url = PDFExporter.generate(from: snapshots, title: title)
             await MainActor.run {
                 if let url {
-                    let ac = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-                    ac.completionWithItemsHandler = { _, _, _, _ in
+                    ShareHelper.present([url]) {
                         isExporting = false
                         dismiss()
-                    }
-                    if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                       let root = scene.keyWindow?.rootViewController {
-                        var top = root
-                        while let presented = top.presentedViewController { top = presented }
-                        top.present(ac, animated: true)
-                    } else {
-                        isExporting = false
                     }
                 } else {
                     isExporting = false

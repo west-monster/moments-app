@@ -1,10 +1,12 @@
 import SwiftUI
+import SwiftData
 import UIKit
 
 struct MemoryCardView: View {
     let memory: Memory
     var onTap: () -> Void
 
+    @Environment(\.modelContext) private var modelContext
     @State private var loadedImage: UIImage?
 
     var body: some View {
@@ -12,28 +14,21 @@ struct MemoryCardView: View {
             if let uiImage = loadedImage {
                 GeometryReader { geo in
                     let side = geo.size.width
-                    let aspect = uiImage.size.width / uiImage.size.height
-                    let isPortrait = aspect < 1
-                    let scaledW = isPortrait ? side : side * aspect
-                    let scaledH = isPortrait ? side / aspect : side
-                    let overflowX = max(scaledW - side, 0)
-                    let overflowY = max(scaledH - side, 0)
+                    let crop = SquareCropGeometry(imageSize: uiImage.size, side: side)
 
                     Color.clear
                         .overlay {
                             Image(uiImage: uiImage)
                                 .resizable()
                                 .scaledToFill()
-                                .offset(
-                                    x: overflowX * (0.5 - memory.cropOffsetX),
-                                    y: overflowY * (0.5 - memory.cropOffsetY)
-                                )
+                                .offset(crop.offset(cropX: memory.cropOffsetX, cropY: memory.cropOffsetY))
                         }
                         .frame(width: side, height: side)
                         .clipped()
                 }
                 .aspectRatio(1, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay(alignment: .topLeading) { heartButton }
                 .overlay(alignment: .topTrailing) {
                     if memory.allImageFileNames.count > 1 {
                         HStack(spacing: 3) {
@@ -50,9 +45,10 @@ struct MemoryCardView: View {
                     }
                 }
             } else {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(AppTheme.cardBackground)
                     .aspectRatio(1, contentMode: .fit)
+                    .overlay(alignment: .topLeading) { heartButton }
                     .overlay {
                         Image(systemName: "photo")
                             .font(.system(size: 36))
@@ -60,59 +56,78 @@ struct MemoryCardView: View {
                     }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 if !memory.message.isEmpty {
                     Text(memory.message)
-                        .font(.system(size: 18, weight: .semibold, design: .serif))
+                        .font(.headline)
                         .foregroundStyle(AppTheme.textPrimary)
-                        .lineSpacing(3)
+                        .lineSpacing(2)
                 }
 
                 if !memory.notes.isEmpty {
                     Text(memory.notes)
-                        .font(.system(size: 14, weight: .regular, design: .serif))
+                        .font(.subheadline)
                         .foregroundStyle(AppTheme.textSecondary)
-                        .lineSpacing(3)
+                        .lineSpacing(2)
                         .lineLimit(3)
                 }
 
                 HStack(spacing: 5) {
                     if let t = MemoryTag(rawValue: memory.tag), t != .none {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 4) {
                             Image(systemName: t.icon)
-                                .font(.system(size: 9))
                             Text(t.label)
-                                .font(.system(size: 10, weight: .bold))
-                                .tracking(1)
-                                .textCase(.uppercase)
                         }
-                        .foregroundStyle(AppTheme.accent)
 
                         Text("·")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(AppTheme.textSecondary)
                     }
 
                     Text(memory.formattedDate)
-                        .font(.system(size: 11, weight: .bold))
-                        .tracking(1.5)
-                        .textCase(.uppercase)
-                        .foregroundStyle(AppTheme.textSecondary)
                 }
+                .font(.subheadline)
+                .foregroundStyle(AppTheme.textSecondary)
             }
-            .padding(.top, 14)
-            .padding(.horizontal, 2)
+            .padding(.top, 16)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .task(id: memory.persistentModelID) {
-            let fileName = memory.cloudFileName
-            guard !fileName.isEmpty else { return }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        // Without an explicit shape the tap region overflows the card and
+        // swallows taps meant for the category chips sitting above it.
+        .contentShape(Rectangle())
+        // Keyed on the file name, not the model ID: editing a memory's photo
+        // keeps the same ID, so keying on that left the card showing the old
+        // image until the view was rebuilt.
+        .task(id: memory.imageFileName) {
+            let fileName = memory.imageFileName
+            guard !fileName.isEmpty else {
+                loadedImage = nil
+                return
+            }
             let image = await Task.detached {
-                LocalStore.shared.loadImage(named: fileName)
+                LocalStore.shared.loadDownscaledImage(named: fileName, maxPixel: 1200)
             }.value
             loadedImage = image
         }
         .onTapGesture { onTap() }
+    }
+
+    /// Favorite toggle in the top-left corner of the photo. Its own button, so
+    /// tapping the heart doesn't open the memory.
+    private var heartButton: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.25)) {
+                memory.isFavorite.toggle()
+            }
+            try? modelContext.save()
+        } label: {
+            Image(systemName: memory.isFavorite ? "heart.fill" : "heart")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(memory.isFavorite ? .red : .white)
+                .padding(8)
+                .background(.black.opacity(0.3), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(10)
     }
 }

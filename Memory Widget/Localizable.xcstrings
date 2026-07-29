@@ -1,6 +1,34 @@
 {
   "sourceLanguage": "es",
   "strings": {
+    "widget.description": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relive your special moments"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revive tus momentos especiales"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revivez vos moments spéciaux"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "特別な瞬間をもう一度"
+          }
+        }
+      }
+    },
     "widget.empty": {
       "localizations": {
         "en": {
@@ -19,6 +47,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ouvrez l'app pour créer des souvenirs"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アプリを開いて思い出を作りましょう"
           }
         }
       }
@@ -42,27 +76,11 @@
             "state": "translated",
             "value": "Moments"
           }
-        }
-      }
-    },
-    "widget.description": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Relive your special moments"
-          }
         },
-        "es": {
+        "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Revive tus momentos especiales"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Revivez vos moments spéciaux"
+            "value": "モーメンツ"
           }
         }
       }
@@ -85,6 +103,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Un moment spécial"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "特別な瞬間"
           }
         }
       }

@@ -3,120 +3,64 @@ import SwiftData
 import UIKit
 
 struct MemoryDetailView: View {
-    @Query(sort: \Memory.order, order: .reverse) private var memories: [Memory]
+    @Query(sort: \Memory.order, order: .reverse) private var allMemories: [Memory]
     let startIndex: Int
+    let filterTag: MemoryTag
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.colorScheme) private var colorScheme
 
     @State private var currentIndex: Int
-    @State private var contentOpacity: Double = 0
-    @State private var dragOffset: CGSize = .zero
     @State private var showDeleteConfirmation = false
     @State private var showEditSheet = false
     @State private var showShareSheet = false
 
-    init(startIndex: Int) {
+    init(startIndex: Int, filterTag: MemoryTag = .none) {
         self.startIndex = startIndex
+        self.filterTag = filterTag
         _currentIndex = State(initialValue: startIndex)
+
+        // Native page dots tinted with the system accent.
+        UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(AppTheme.accent)
+        UIPageControl.appearance().pageIndicatorTintColor = UIColor(AppTheme.accent).withAlphaComponent(0.25)
     }
 
-    private var dragProgress: CGFloat {
-        min(abs(dragOffset.height) / 300, 1.0)
-    }
-
-    private var detailBackground: Color {
-        colorScheme == .dark ? .black : .white
+    /// The memories the pager swipes through — kept in sync with the feed's
+    /// active tag filter so it shows the same set the user tapped from.
+    private var memories: [Memory] {
+        if filterTag == .none { return allMemories }
+        return allMemories.filter { $0.tag == filterTag.rawValue }
     }
 
     var body: some View {
-        ZStack {
-            detailBackground
-                .ignoresSafeArea()
-                .opacity(1 - dragProgress * 0.5)
-
+        Group {
             if memories.isEmpty {
                 Color.clear.onAppear { dismiss() }
             } else {
-                TabView(selection: $currentIndex) {
-                    ForEach(Array(memories.enumerated()), id: \.element.persistentModelID) { index, memory in
-                        singleMemoryView(memory)
+                GeometryReader { geo in
+                    // One photo size for every page, measured once here, so the
+                    // band is identical across memories.
+                    let side = min(geo.size.width, geo.size.height * 0.58)
+                    TabView(selection: $currentIndex) {
+                        ForEach(Array(memories.enumerated()), id: \.element.persistentModelID) { index, memory in
+                            MemoryPageView(
+                                memory: memory,
+                                photoSide: side,
+                                onShare: { showShareSheet = true },
+                                onEdit: { showEditSheet = true },
+                                onDelete: { showDeleteConfirmation = true }
+                            )
                             .tag(index)
+                        }
                     }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .offset(dragOffset)
-                .gesture(
-                    DragGesture(minimumDistance: 30, coordinateSpace: .global)
-                        .onChanged { value in
-                            if abs(value.translation.height) > abs(value.translation.width) {
-                                dragOffset = CGSize(width: 0, height: value.translation.height)
-                            }
-                        }
-                        .onEnded { value in
-                            if abs(value.translation.height) > 120 {
-                                dismiss()
-                            } else {
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
-                                    dragOffset = .zero
-                                }
-                            }
-                        }
-                )
-
-                VStack {
-                    pageIndicator
-                        .padding(.top, 60)
-                    Spacer()
-                }
-                .opacity(contentOpacity)
-            }
-        }
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.4).delay(0.2)) {
-                contentOpacity = 1
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(AppTheme.textPrimary)
-                    .frame(width: 32, height: 32)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .padding(16)
-            .opacity(contentOpacity)
-        }
-        .overlay(alignment: .topLeading) {
-            HStack(spacing: 10) {
-                Button { showDeleteConfirmation = true } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.red)
-                        .frame(width: 32, height: 32)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-
-                Button { showEditSheet = true } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                        .frame(width: 32, height: 32)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-
-                Button { showShareSheet = true } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
-                        .frame(width: 32, height: 32)
-                        .background(.ultraThinMaterial, in: Circle())
+                    .tabViewStyle(.page(indexDisplayMode: .never))
                 }
             }
-            .padding(16)
-            .opacity(contentOpacity)
         }
+        .tint(AppTheme.accent)
+        // Grabber + swipe-down are the only dismissal (no "X" — avoids a
+        // double affordance).
+        .presentationDragIndicator(.visible)
+        .presentationDetents([.large])
         .confirmationDialog(
             String(localized: "delete.title"),
             isPresented: $showDeleteConfirmation,
@@ -130,114 +74,15 @@ struct MemoryDetailView: View {
         .sheet(isPresented: $showEditSheet) {
             if currentIndex < memories.count {
                 EditMemoryView(memory: memories[currentIndex])
+                    .presentationSizing(.page)
             }
         }
         .sheet(isPresented: $showShareSheet) {
             if currentIndex < memories.count {
-                ShareCardView(memory: memories[currentIndex], image: memories[currentIndex].uiImage)
+                ShareCardView(memory: memories[currentIndex])
+                    .presentationSizing(.page)
             }
         }
-    }
-
-    // MARK: - Single memory page
-
-    private func singleMemoryView(_ memory: Memory) -> some View {
-        VStack(spacing: 0) {
-            Spacer()
-
-            photoCarousel(for: memory)
-
-            if !memory.message.isEmpty {
-                VStack(spacing: 10) {
-                    Rectangle()
-                        .fill(AppTheme.accent)
-                        .frame(width: 28, height: 2)
-
-                    Text(memory.message)
-                        .font(.system(size: 20, weight: .semibold, design: .serif))
-                        .foregroundStyle(AppTheme.textPrimary)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(5)
-                        .padding(.horizontal, 24)
-                }
-                .padding(.top, 24)
-            }
-
-            if !memory.notes.isEmpty {
-                Text(memory.notes)
-                    .font(.system(size: 15, weight: .regular, design: .serif))
-                    .foregroundStyle(AppTheme.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-                    .padding(.horizontal, 32)
-                    .padding(.top, 12)
-            }
-
-            HStack(spacing: 6) {
-                if let t = MemoryTag(rawValue: memory.tag), t != .none {
-                    Image(systemName: t.icon)
-                        .font(.system(size: 10))
-                    Text(t.label)
-                        .font(.system(size: 11, weight: .bold))
-                        .tracking(1.5)
-                        .textCase(.uppercase)
-
-                    Text("·")
-                        .font(.system(size: 11, weight: .bold))
-                }
-
-                Text(memory.formattedDate)
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(2)
-                    .textCase(.uppercase)
-            }
-            .foregroundStyle(AppTheme.textSecondary)
-            .padding(.top, 12)
-
-            Spacer()
-        }
-    }
-
-    // MARK: - Photo carousel
-
-    @ViewBuilder
-    private func photoCarousel(for memory: Memory) -> some View {
-        let images = memory.allImages
-        if images.count > 1 {
-            TabView {
-                ForEach(Array(images.enumerated()), id: \.offset) { _, img in
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .padding(.horizontal, 12)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .automatic))
-            .frame(height: UIScreen.main.bounds.width)
-        } else if let uiImage = images.first {
-            Image(uiImage: uiImage)
-                .resizable()
-                .scaledToFit()
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .padding(.horizontal, 12)
-        }
-    }
-
-    // MARK: - Page indicator
-
-    private var pageIndicator: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<memories.count, id: \.self) { i in
-                Capsule()
-                    .fill(i == currentIndex ? AppTheme.accent : Color.white.opacity(0.5))
-                    .frame(width: i == currentIndex ? 20 : 6, height: 6)
-                    .animation(.spring(response: 0.3), value: currentIndex)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
     }
 
     // MARK: - Delete
@@ -245,16 +90,214 @@ struct MemoryDetailView: View {
     private func deleteMemory() {
         guard currentIndex < memories.count else { return }
         let memory = memories[currentIndex]
+        // Counted before the delete: reading `memories` afterwards depends on
+        // whether the @Query has already refreshed, which isn't guaranteed
+        // within this call and left the pager on a stale index.
+        let remaining = memories.count - 1
+
         for name in memory.allImageFileNames {
             LocalStore.shared.deleteImage(named: name)
         }
         modelContext.delete(memory)
-        if memories.count <= 1 {
+
+        if remaining <= 0 {
             dismiss()
-        } else if currentIndex >= memories.count - 1 {
+        } else if currentIndex > remaining - 1 {
             withAnimation {
-                currentIndex = max(0, memories.count - 2)
+                currentIndex = remaining - 1
             }
         }
+    }
+}
+
+// MARK: - Single memory page
+
+/// One page of the detail pager. Loads its photos off the main thread so
+/// swiping between memories doesn't decode full-resolution images in `body`.
+private struct MemoryPageView: View {
+    let memory: Memory
+    /// Fixed photo band height, shared by every page (passed from the
+    /// container).
+    let photoSide: CGFloat
+    let onShare: () -> Void
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+
+    @State private var images: [UIImage] = []
+    @State private var photoIndex = 0
+
+    /// Reserved height for the native page dots below the photo, kept even for
+    /// single-photo memories so the text sits at the same Y everywhere.
+    private let dotsReserve: CGFloat = 34
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Edge to edge and flush with the top of the sheet — the photo owns
+            // the whole upper band, no side margins.
+            photoCarousel
+
+            VStack(spacing: 16) {
+                // The photo can't fill a tall phone, so the leftover height is
+                // split above and below the caption instead of collecting into
+                // one hole between the text and the bar.
+                Spacer(minLength: 8)
+
+                textBlock
+
+                Spacer(minLength: 8)
+
+                actionRow
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+        }
+        .frame(maxWidth: .infinity)
+        // Keyed on the file names so editing a memory's photos reloads the
+        // carousel; the model ID doesn't change when the photos do.
+        .task(id: memory.allImageFileNames) {
+            let names = memory.allImageFileNames
+            let loaded = await Task.detached(priority: .userInitiated) {
+                // Downsampled so a full carousel of large photos can't exhaust
+                // memory and drop the later ones.
+                names.compactMap { LocalStore.shared.loadDownscaledImage(named: $0, maxPixel: 1400) }
+            }.value
+            images = loaded
+            photoIndex = 0
+        }
+    }
+
+    // MARK: - Text block (centered, single system family)
+
+    private var textBlock: some View {
+        VStack(spacing: 8) {
+            if !memory.message.isEmpty {
+                Text(memory.message)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+
+            if !memory.notes.isEmpty {
+                Text(memory.notes)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+            }
+
+            HStack(spacing: 6) {
+                if let tag = MemoryTag(rawValue: memory.tag), tag != .none {
+                    Image(systemName: tag.icon)
+                    Text("\(tag.label) · \(memory.formattedDate)")
+                } else {
+                    Text(memory.formattedDate)
+                }
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .padding(.top, 2)
+        }
+    }
+
+    // MARK: - Actions
+
+    /// Styled after the home screen's floating tab bar: a capsule that hugs its
+    /// three items, centered, lifted off the page by a soft shadow. No
+    /// hairlines — the tab bar has none either, and the labels under each icon
+    /// already mark where one button ends and the next begins.
+    private var actionRow: some View {
+        HStack(spacing: 2) {
+            actionButton("square.and.arrow.up", title: "action.share", tint: AppTheme.accent, action: onShare)
+            actionButton("pencil", title: "action.edit", tint: AppTheme.accent, action: onEdit)
+            actionButton("trash", title: "action.delete", tint: .red, role: .destructive, action: onDelete)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background(Color(.secondarySystemBackground), in: Capsule())
+        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+    }
+
+    private func actionButton(
+        _ icon: String,
+        title: LocalizedStringKey,
+        tint: Color,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .medium))
+                Text(title)
+                    .font(.caption2.weight(.medium))
+            }
+            .foregroundStyle(tint)
+            .frame(width: 74, height: 48)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Photo carousel
+
+    /// Full-width band using each photo's stored crop, with native page dots
+    /// (tinted with the accent) rendered on white below the photo.
+    @ViewBuilder
+    private var photoCarousel: some View {
+        let side = photoSide
+        Group {
+            if images.count > 1 {
+                TabView(selection: $photoIndex) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { index, img in
+                        photoPage(croppedPhoto(img, index: index, side: side))
+                            .tag(index)
+                    }
+                }
+                .tabViewStyle(.page)
+            } else if let uiImage = images.first {
+                photoPage(croppedPhoto(uiImage, index: 0, side: side))
+            } else {
+                photoPage(
+                    Rectangle()
+                        .fill(Color(.secondarySystemBackground))
+                        .frame(height: side)
+                        .overlay { ProgressView() }
+                )
+            }
+        }
+        .frame(height: side + dotsReserve)
+    }
+
+    /// Top-aligns the photo within its band so the native dots sit in the
+    /// reserved space beneath it.
+    private func photoPage<Content: View>(_ content: Content) -> some View {
+        VStack(spacing: 0) {
+            content
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Aspect-fills the full-width band using the crop stored for the photo, so
+    /// the framing matches the rest of the app. No corner radius — the band
+    /// runs edge to edge.
+    private func croppedPhoto(_ img: UIImage, index: Int, side: CGFloat) -> some View {
+        let position = memory.cropOffset(at: index)
+        return GeometryReader { geo in
+            let scale = max(geo.size.width / max(img.size.width, 1),
+                            geo.size.height / max(img.size.height, 1))
+            let width = img.size.width * scale
+            let height = img.size.height * scale
+
+            Image(uiImage: img)
+                .resizable()
+                .frame(width: width, height: height)
+                .offset(
+                    x: -(width - geo.size.width) * position.x,
+                    y: -(height - geo.size.height) * position.y
+                )
+        }
+        .frame(height: side)
+        .clipped()
     }
 }

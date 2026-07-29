@@ -4,18 +4,34 @@ import UIKit
 
 private enum SharedData {
     static let appGroupID = "group.axo.V-App"
+    static let thumbnailsDirName = "WidgetThumbnails"
+
+    private static var containerURL: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
+    }
 
     static func loadMemories() -> [WidgetMemoryData] {
-        guard let groupURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
-            return []
-        }
-        let url = groupURL.appendingPathComponent("widget_memories.json")
-        guard let data = try? Data(contentsOf: url),
+        guard let url = containerURL?.appendingPathComponent("widget_memories.json"),
+              let data = try? Data(contentsOf: url),
               let memories = try? JSONDecoder().decode([WidgetMemoryData].self, from: data) else {
             return []
         }
         return memories
     }
+
+    static func thumbnail(named name: String) -> UIImage? {
+        guard let url = containerURL?
+            .appendingPathComponent(thumbnailsDirName, isDirectory: true)
+            .appendingPathComponent(name),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return UIImage(data: data)
+    }
+
+    /// Fixed editorial accent shared with the app (mint on dark, bright blue
+    /// on light).
+    static var accentColor: Color { AccentPalette.accent }
 }
 
 // MARK: - Timeline
@@ -48,9 +64,8 @@ struct MemoryTimelineProvider: TimelineProvider {
         guard let m = memories.randomElement() else { return nil }
 
         var image: UIImage?
-        if let b64 = m.imageBase64,
-           let data = Data(base64Encoded: b64) {
-            image = UIImage(data: data)
+        if let name = m.imageFileName {
+            image = SharedData.thumbnail(named: name)
         }
 
         return MemoryEntry(date: .now, message: m.message, memoryDate: m.memoryDate, image: image, isEmpty: false)
@@ -61,7 +76,6 @@ struct MemoryTimelineProvider: TimelineProvider {
 
 struct MemoryWidgetView: View {
     let entry: MemoryEntry
-    @Environment(\.widgetFamily) var family
 
     var body: some View {
         if entry.isEmpty {
@@ -78,16 +92,14 @@ struct MemoryWidgetView: View {
 
                 if !entry.message.isEmpty {
                     Text(entry.message)
-                        .font(.system(size: family == .systemLarge ? 17 : 14, weight: .semibold, design: .serif))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.primary)
                         .lineLimit(3)
                         .lineSpacing(2)
                 }
 
                 Text(entry.memoryDate)
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(1.2)
-                    .textCase(.uppercase)
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
 
                 Spacer()
@@ -100,23 +112,17 @@ struct MemoryWidgetView: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-                    .frame(
-                        width: family == .systemLarge ? 160 : 130,
-                        height: family == .systemLarge ? 160 : 130
-                    )
+                    .frame(width: 130, height: 130)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .padding(4)
             } else {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(red: 0.33, green: 0.53, blue: 1.0).opacity(0.15))
-                    .frame(
-                        width: family == .systemLarge ? 160 : 130,
-                        height: family == .systemLarge ? 160 : 130
-                    )
+                    .fill(SharedData.accentColor.opacity(0.15))
+                    .frame(width: 130, height: 130)
                     .overlay {
                         Image(systemName: "heart.circle")
                             .font(.system(size: 28, weight: .thin))
-                            .foregroundStyle(Color(red: 0.33, green: 0.53, blue: 1.0))
+                            .foregroundStyle(SharedData.accentColor)
                     }
                     .padding(4)
             }
@@ -127,14 +133,21 @@ struct MemoryWidgetView: View {
         VStack(spacing: 8) {
             Image(systemName: "heart.circle")
                 .font(.system(size: 32, weight: .thin))
-                .foregroundStyle(Color(red: 0.33, green: 0.53, blue: 1.0))
+                .foregroundStyle(SharedData.accentColor)
 
             Text("widget.empty")
-                .font(.system(size: 13, weight: .medium, design: .serif))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
         .padding()
+    }
+}
+
+/// White backdrop for the widget, matching the app background.
+private struct WidgetBackground: View {
+    var body: some View {
+        AccentPalette.appBackground
     }
 }
 
@@ -146,11 +159,17 @@ struct MemoryWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: MemoryTimelineProvider()) { entry in
             MemoryWidgetView(entry: entry)
-                .containerBackground(.fill, for: .widget)
+                .containerBackground(for: .widget) {
+                    WidgetBackground()
+                }
+                // Background is a fixed white, so pin the content to light too;
+                // otherwise semantic text colors invert on a dark home screen
+                // and the message/date become invisible.
+                .environment(\.colorScheme, .light)
         }
         .configurationDisplayName("widget.name")
         .description("widget.description")
-        .supportedFamilies([.systemMedium, .systemLarge])
+        .supportedFamilies([.systemMedium])
     }
 }
 

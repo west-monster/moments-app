@@ -1,4 +1,22 @@
 import UIKit
+import ImageIO
+
+extension UIImage {
+    /// Aspect-preserving downscale so the longest side is at most `maxSide`;
+    /// returns `self` when already small enough. Shared by the transports
+    /// that ship photos off-device (watch sync, future exports).
+    func downscaled(maxSide: CGFloat) -> UIImage {
+        let largest = max(size.width, size.height)
+        guard largest > maxSide, largest > 0 else { return self }
+        let scale = maxSide / largest
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: newSize, format: format).image { _ in
+            draw(in: CGRect(origin: .zero, size: newSize))
+        }
+    }
+}
 
 final class LocalStore {
     static let shared = LocalStore()
@@ -6,8 +24,14 @@ final class LocalStore {
     private let fileManager = FileManager.default
     private var cache = NSCache<NSString, UIImage>()
 
+    /// Downscaled entries are cached under `name#maxPixel`, which `NSCache`
+    /// can't enumerate, so the derived keys are tracked here to be evicted
+    /// alongside their source image. Written from background decode tasks.
+    private let variantLock = NSLock()
+    private var variantKeys: [String: Set<String>] = [:]
+
     private init() {
-        cache.countLimit = 20
+        cache.countLimit = 50
         ensureDirectories()
     }
 
@@ -62,8 +86,46 @@ final class LocalStore {
         return image
     }
 
+    /// Decodes a downsampled version straight from disk (ImageIO thumbnail), so
+    /// showing many photos at once — e.g. a memory's full carousel — never
+    /// loads them all at full resolution and runs the app out of memory (which
+    /// made photos past the first few fail to appear). For display only; the
+    /// share card and PDF export still use `loadImage` for full resolution.
+    func loadDownscaledImage(named fileName: String, maxPixel: CGFloat) -> UIImage? {
+        let key = "\(fileName)#\(Int(maxPixel))" as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+        let url = imagesURL.appendingPathComponent(fileName)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return loadImage(named: fileName)
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(maxPixel)
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return loadImage(named: fileName)
+        }
+        let image = UIImage(cgImage: cgImage)
+        cache.setObject(image, forKey: key)
+        variantLock.lock()
+        variantKeys[fileName, default: []].insert(key as String)
+        variantLock.unlock()
+        return image
+    }
+
     func deleteImage(named fileName: String) {
         cache.removeObject(forKey: fileName as NSString)
+
+        variantLock.lock()
+        let derived = variantKeys.removeValue(forKey: fileName) ?? []
+        variantLock.unlock()
+        for key in derived {
+            cache.removeObject(forKey: key as NSString)
+        }
+
         let url = imagesURL.appendingPathComponent(fileName)
         try? fileManager.removeItem(at: url)
     }
@@ -80,13 +142,18 @@ final class LocalStore {
         let cropOffsetY: Double
         var tag: String = ""
         var extraImageFileNames: [String] = []
+        // Optional so snapshots written before per-photo crops still decode.
+        var extraCropOffsetsX: [Double]?
+        var extraCropOffsetsY: [Double]?
+        // Optional so snapshots written before favorites still decode.
+        var isFavorite: Bool?
     }
 
     func exportMetadata(from memories: [Memory]) {
         let formatter = ISO8601DateFormatter()
         let items = memories.map { m in
             ExportedMemory(
-                imageFileName: m.cloudFileName,
+                imageFileName: m.imageFileName,
                 message: m.message,
                 notes: m.notes,
                 date: formatter.string(from: m.date),
@@ -94,7 +161,10 @@ final class LocalStore {
                 cropOffsetX: m.cropOffsetX,
                 cropOffsetY: m.cropOffsetY,
                 tag: m.tag,
-                extraImageFileNames: m.extraImageFileNames
+                extraImageFileNames: m.extraImageFileNames,
+                extraCropOffsetsX: m.extraCropOffsetsX,
+                extraCropOffsetsY: m.extraCropOffsetsY,
+                isFavorite: m.isFavorite
             )
         }
         let encoder = JSONEncoder()

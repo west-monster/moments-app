@@ -2,306 +2,362 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 import UIKit
+import UniformTypeIdentifiers
+
+/// A picked photo with a stable identity, so the grid can be reordered by drag.
+private struct PickedPhoto: Identifiable {
+    let id = UUID()
+    var image: UIImage
+    var crop: CGPoint = CGPoint(x: 0.5, y: 0.5)
+}
 
 struct AddMemoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedPhotos: [PhotosPickerItem] = []
-    @State private var images: [UIImage] = []
-    @State private var currentPhotoIndex = 0
-    @State private var message = ""
+    @State private var photos: [PickedPhoto] = []
+    @State private var draggedPhoto: PickedPhoto?
+    @State private var cropTarget: PhotoCropTarget?
+    /// Single-photo replacement: which slot (by id), and the picked item.
+    @State private var replaceID: UUID?
+    @State private var replaceItem: PhotosPickerItem?
+    @State private var showReplacePicker = false
+    @State private var name = ""
     @State private var notes = ""
     @State private var date = Date.now
-    @State private var tag: MemoryTag = .none
-    @State private var appeared = false
+    @State private var selectedCategory: MemoryTag = .none
     @State private var isSaving = false
     @State private var showSaveError = false
-    @State private var cropOffsetX: CGFloat = 0.5
-    @State private var cropOffsetY: CGFloat = 0.5
-    @State private var dragStartX: CGFloat = 0.5
-    @State private var dragStartY: CGFloat = 0.5
     var nextOrder: Int
+
+    private let thumbColumns = [GridItem(.adaptive(minimum: 72), spacing: 8)]
+
+    /// Save needs at least one photo or a name.
+    private var canSave: Bool {
+        !photos.isEmpty || !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    photoSection
-                    tagPicker
-
-                    fieldCard(label: String(localized: "form.message")) {
-                        TextField(String(localized: "form.message.placeholder"), text: $message, axis: .vertical)
-                            .font(.system(size: 17, weight: .regular, design: .serif))
-                            .foregroundStyle(AppTheme.textPrimary)
-                            .lineLimit(3...6)
-                            .tint(AppTheme.accent)
-                    }
-
-                    fieldCard(label: String(localized: "form.description")) {
-                        TextField(String(localized: "form.description.placeholder"), text: $notes, axis: .vertical)
-                            .font(.system(size: 15, weight: .regular, design: .serif))
-                            .foregroundStyle(AppTheme.textPrimary)
-                            .lineLimit(3...8)
-                            .tint(AppTheme.accent)
-                    }
-
-                    fieldCard(label: String(localized: "form.date")) {
-                        DatePicker(
-                            String(localized: "form.date.pick"),
-                            selection: $date,
-                            in: ...Date.now,
-                            displayedComponents: .date
-                        )
-                        .datePickerStyle(.compact)
-                        .labelsHidden()
-                        .tint(AppTheme.accent)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 20)
+            Form {
+                photosSection
+                categorySection
+                nameSection
+                descriptionSection
+                dateSection
             }
-            .scrollDismissesKeyboard(.interactively)
-            .background(AppTheme.background)
+            .scrollContentBackground(.visible)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle(String(localized: "form.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(String(localized: "form.cancel")) { dismiss() }
-                        .foregroundStyle(AppTheme.textSecondary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(String(localized: "form.save")) { save() }
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(!images.isEmpty ? AppTheme.accent : AppTheme.textSecondary)
-                        .disabled(images.isEmpty || isSaving)
+                        .fontWeight(.semibold)
+                        .disabled(!canSave || isSaving)
                 }
             }
-            .onChange(of: selectedPhotos) { _, newValue in
-                Task {
-                    var loaded: [UIImage] = []
-                    for item in newValue {
-                        if let data = try? await item.loadTransferable(type: Data.self),
-                           let image = UIImage(data: data) {
-                            loaded.append(image)
-                        }
-                    }
-                    if !loaded.isEmpty {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            images = loaded
-                            currentPhotoIndex = 0
-                            cropOffsetX = 0.5
-                            cropOffsetY = 0.5
-                        }
-                    }
-                }
-            }
-            .onAppear {
-                withAnimation(.easeOut(duration: 0.4)) { appeared = true }
-            }
+            .onChange(of: selectedPhotos) { _, newValue in loadPhotos(newValue) }
+            .photosPicker(isPresented: $showReplacePicker, selection: $replaceItem, matching: .images)
+            .onChange(of: replaceItem) { _, newValue in replacePhoto(newValue) }
             .alert(String(localized: "save.error.title"), isPresented: $showSaveError) {
                 Button("OK") {}
             } message: {
                 Text("save.error.message")
             }
+            .sheet(item: $cropTarget) { target in
+                if photos.indices.contains(target.id) {
+                    CropAdjustView(image: photos[target.id].image, initialCrop: photos[target.id].crop) { newCrop in
+                        if photos.indices.contains(target.id) {
+                            photos[target.id].crop = newCrop
+                        }
+                    }
+                }
+            }
         }
+        .tint(AppTheme.accent)
     }
 
-    // MARK: - Photo section
+    // MARK: - Choose Photos
 
-    private var photoSection: some View {
-        ZStack {
-            if !images.isEmpty {
-                VStack(spacing: 10) {
-                    TabView(selection: $currentPhotoIndex) {
-                        ForEach(Array(images.enumerated()), id: \.offset) { index, img in
-                            GeometryReader { geo in
-                                let side = geo.size.width
-                                let imgW = img.size.width
-                                let imgH = img.size.height
-                                let aspect = imgW / imgH
-                                let isPortrait = aspect < 1
-                                let scaledW = isPortrait ? side : side * aspect
-                                let scaledH = isPortrait ? side / aspect : side
-                                let overflowX = max(scaledW - side, 0)
-                                let overflowY = max(scaledH - side, 0)
+    private var photosSubtitle: String {
+        String(format: String(localized: "form.photos.subtitle"), MemoryLimits.maxPhotos)
+    }
 
-                                Color.clear
-                                    .overlay {
-                                        Image(uiImage: img)
-                                            .resizable()
-                                            .scaledToFill()
-                                            .offset(
-                                                x: index == 0 ? overflowX * (0.5 - cropOffsetX) : 0,
-                                                y: index == 0 ? overflowY * (0.5 - cropOffsetY) : 0
-                                            )
-                                    }
-                                    .frame(width: side, height: side)
-                                    .clipped()
-                            }
-                            .aspectRatio(1, contentMode: .fit)
-                            .tag(index)
-                        }
-                    }
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    .aspectRatio(1, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .gesture(
-                        currentPhotoIndex == 0 ?
-                        DragGesture()
-                            .onChanged { value in
-                                let img = images[0]
-                                let aspect = img.size.width / img.size.height
-                                let isPortrait = aspect < 1
-                                let side: CGFloat = UIScreen.main.bounds.width - 32
-                                let scaledW = isPortrait ? side : side * aspect
-                                let scaledH = isPortrait ? side / aspect : side
-                                let overflowX = max(scaledW - side, 0)
-                                let overflowY = max(scaledH - side, 0)
-                                if overflowX > 0 {
-                                    let dx = -value.translation.width / overflowX
-                                    cropOffsetX = min(max(dragStartX + dx, 0), 1)
-                                }
-                                if overflowY > 0 {
-                                    let dy = -value.translation.height / overflowY
-                                    cropOffsetY = min(max(dragStartY + dy, 0), 1)
-                                }
-                            }
-                            .onEnded { _ in
-                                dragStartX = cropOffsetX
-                                dragStartY = cropOffsetY
-                            }
-                        : nil
-                    )
-                    .overlay(alignment: .topTrailing) {
-                        PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 6, matching: .images) {
-                            Image(systemName: "arrow.triangle.2.circlepath.camera.fill")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: 32, height: 32)
-                                .background(.black.opacity(0.5), in: Circle())
-                        }
-                        .padding(10)
-                    }
-
-                    if images.count > 1 {
-                        photoIndicator
-                    }
+    @ViewBuilder
+    private var photosSection: some View {
+        Section {
+            if photos.isEmpty {
+                PhotosPicker(selection: $selectedPhotos, maxSelectionCount: MemoryLimits.maxPhotos, matching: .images) {
+                    choosePhotosPlaceholder
                 }
             } else {
-                PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 6, matching: .images) {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(AppTheme.cardBackground)
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay {
-                            VStack(spacing: 12) {
-                                Image(systemName: "plus.circle")
-                                    .font(.system(size: 40, weight: .thin))
-                                Text("form.choosePhotos")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .tracking(1)
-                                    .textCase(.uppercase)
-                            }
-                            .foregroundStyle(AppTheme.textSecondary)
-                        }
+                PhotosPicker(
+                    selection: $selectedPhotos,
+                    maxSelectionCount: max(MemoryLimits.maxPhotos - photos.count, 1),
+                    matching: .images
+                ) {
+                    addMorePhotosRow
                 }
-            }
-        }
-    }
+                .disabled(photos.count >= MemoryLimits.maxPhotos)
 
-    private var photoIndicator: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<images.count, id: \.self) { i in
-                Capsule()
-                    .fill(i == currentPhotoIndex ? AppTheme.accent : AppTheme.textSecondary.opacity(0.3))
-                    .frame(width: i == currentPhotoIndex ? 16 : 6, height: 6)
-                    .animation(.spring(response: 0.3), value: currentPhotoIndex)
-            }
-        }
-    }
-
-    // MARK: - Tag picker
-
-    private var tagPicker: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("form.tag")
-                .font(.system(size: 11, weight: .bold))
-                .tracking(2)
-                .foregroundStyle(AppTheme.accent)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(MemoryTag.allCases) { t in
-                        Button {
-                            withAnimation(.spring(response: 0.3)) { tag = t }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: t.icon)
-                                    .font(.system(size: 12))
-                                Text(t.label)
-                                    .font(.system(size: 13, weight: .medium))
+                LazyVGrid(columns: thumbColumns, spacing: 8) {
+                    ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
+                        Menu {
+                            Button {
+                                replaceID = photo.id
+                                showReplacePicker = true
+                            } label: {
+                                Label("photo.change", systemImage: "photo")
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .foregroundStyle(tag == t ? .white : AppTheme.textPrimary)
-                            .background(tag == t ? AppTheme.accent : AppTheme.cardBackground, in: Capsule())
+                            Button {
+                                cropTarget = PhotoCropTarget(id: index)
+                            } label: {
+                                Label("photo.crop", systemImage: "crop")
+                            }
+                            Button(role: .destructive) {
+                                removePhoto(photo)
+                            } label: {
+                                Label("photo.remove", systemImage: "trash")
+                            }
+                        } label: {
+                            thumbnail(photo)
                         }
+                        .onDrag {
+                            draggedPhoto = photo
+                            return NSItemProvider(object: photo.id.uuidString as NSString)
+                        }
+                        .onDrop(
+                            of: [.text],
+                            delegate: PhotoReorderDropDelegate(item: photo, items: $photos, dragged: $draggedPhoto)
+                        )
                     }
                 }
+                .padding(.vertical, 6)
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(AppTheme.cardBackground))
     }
 
-    private func fieldCard<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label)
-                .font(.system(size: 11, weight: .bold))
-                .tracking(2)
+    /// Prominent centered call-to-action shown before any photo is picked.
+    private var choosePhotosPlaceholder: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 30))
                 .foregroundStyle(AppTheme.accent)
-            content()
+                .frame(width: 84, height: 84)
+                .background(Color(.systemGray5), in: Circle())
+
+            Text("form.choosePhotos")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Text(photosSubtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(AppTheme.cardBackground)
-        )
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
     }
 
-    // MARK: - Guardar
+    /// Compact row to add more photos once some are picked.
+    private var addMorePhotosRow: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.title2)
+                .foregroundStyle(AppTheme.accent)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("form.addPhotos")
+                    .foregroundStyle(AppTheme.accent)
+                Text(photosSubtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func thumbnail(_ photo: PickedPhoto) -> some View {
+        GeometryReader { geo in
+            let side = geo.size.width
+            let crop = SquareCropGeometry(imageSize: photo.image.size, side: side)
+
+            Color.clear
+                .overlay {
+                    Image(uiImage: photo.image)
+                        .resizable()
+                        .scaledToFill()
+                        .offset(crop.offset(cropX: photo.crop.x, cropY: photo.crop.y))
+                }
+                .frame(width: side, height: side)
+                .clipped()
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    // MARK: - Category
+
+    private var categorySection: some View {
+        Section {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(MemoryTag.allCases) { category in
+                        categoryChip(category)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color(.systemGroupedBackground))
+        } header: {
+            Text("form.section.category").textCase(nil)
+        }
+    }
+
+    private func categoryChip(_ category: MemoryTag) -> some View {
+        let isSelected = selectedCategory == category
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) { selectedCategory = category }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: category.icon)
+                Text(category == .none ? String(localized: "tag.none") : category.label)
+            }
+            .font(.subheadline.weight(isSelected ? .semibold : .regular))
+            .foregroundStyle(isSelected ? .white : .primary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(isSelected ? AppTheme.accent : Color(.secondarySystemGroupedBackground), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Text fields
+
+    private var nameSection: some View {
+        Section {
+            TextField(String(localized: "form.message.placeholder"), text: $name)
+        } header: {
+            Text("form.section.name").textCase(nil)
+        }
+    }
+
+    private var descriptionSection: some View {
+        Section {
+            TextField(String(localized: "form.description.placeholder"), text: $notes, axis: .vertical)
+                .lineLimit(3...6)
+        } header: {
+            Text("form.section.description").textCase(nil)
+        }
+    }
+
+    private var dateSection: some View {
+        Section {
+            DatePicker(
+                String(localized: "form.section.date"),
+                selection: $date,
+                in: ...Date.now,
+                displayedComponents: .date
+            )
+        }
+    }
+
+    // MARK: - Photo operations
+
+    /// Appends the newly picked photos (never replaces the whole set), up to
+    /// the per-memory limit, then clears the picker selection so the next pick
+    /// adds more.
+    private func loadPhotos(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        Task {
+            var loaded: [UIImage] = []
+            for item in items {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    loaded.append(image)
+                }
+            }
+            selectedPhotos = []
+            guard !loaded.isEmpty else { return }
+            let room = max(MemoryLimits.maxPhotos - photos.count, 0)
+            let toAdd = Array(loaded.prefix(room))
+            guard !toAdd.isEmpty else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                photos.append(contentsOf: toAdd.map { PickedPhoto(image: $0) })
+            }
+        }
+    }
+
+    /// Replaces a single photo (the one whose menu was used) with one new pick.
+    private func replacePhoto(_ item: PhotosPickerItem?) {
+        guard let item, let id = replaceID else { return }
+        Task {
+            defer {
+                replaceItem = nil
+                replaceID = nil
+            }
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data),
+                  let index = photos.firstIndex(where: { $0.id == id }) else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                photos[index].image = image
+                photos[index].crop = CGPoint(x: 0.5, y: 0.5)
+            }
+        }
+    }
+
+    private func removePhoto(_ photo: PickedPhoto) {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            photos.removeAll { $0.id == photo.id }
+        }
+    }
+
+    // MARK: - Save
 
     private func save() {
-        guard !images.isEmpty else { return }
+        guard canSave else { return }
         isSaving = true
 
-        guard let mainFileName = LocalStore.shared.saveImage(images[0]) else {
-            isSaving = false
-            showSaveError = true
-            return
+        var mainFileName = ""
+        if let first = photos.first {
+            guard let saved = LocalStore.shared.saveImage(first.image) else {
+                isSaving = false
+                showSaveError = true
+                return
+            }
+            mainFileName = saved
         }
 
         var extraNames: [String] = []
-        for img in images.dropFirst() {
-            if let name = LocalStore.shared.saveImage(img) {
-                extraNames.append(name)
+        var extraXs: [Double] = []
+        var extraYs: [Double] = []
+        for photo in photos.dropFirst() {
+            if let saved = LocalStore.shared.saveImage(photo.image) {
+                extraNames.append(saved)
+                extraXs.append(Double(photo.crop.x))
+                extraYs.append(Double(photo.crop.y))
             }
         }
 
+        let mainCrop = photos.first?.crop ?? CGPoint(x: 0.5, y: 0.5)
         let memory = Memory(
             imageFileName: mainFileName,
-            message: message,
+            message: name,
             notes: notes,
             date: date,
             order: nextOrder,
-            cropOffsetX: Double(cropOffsetX),
-            cropOffsetY: Double(cropOffsetY),
-            tag: tag.rawValue,
-            extraImageFileNames: extraNames
+            cropOffsetX: Double(mainCrop.x),
+            cropOffsetY: Double(mainCrop.y),
+            tag: selectedCategory.rawValue,
+            extraImageFileNames: extraNames,
+            extraCropOffsetsX: extraXs,
+            extraCropOffsetsY: extraYs
         )
         modelContext.insert(memory)
         dismiss()

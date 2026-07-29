@@ -2,289 +2,406 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 import UIKit
+import UniformTypeIdentifiers
+
+/// A photo slot in the edit form. `fileName` is the file already on disk;
+/// `nil` means the user just picked it and it only gets written on save.
+/// The square-crop position (0...1, 0.5 = centered) travels with the photo.
+private struct EditablePhoto: Identifiable {
+    let id = UUID()
+    var image: UIImage
+    var fileName: String?
+    var cropX: CGFloat = 0.5
+    var cropY: CGFloat = 0.5
+}
 
 struct EditMemoryView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var memory: Memory
 
-    @State private var selectedPhotos: [PhotosPickerItem] = []
-    @State private var images: [UIImage] = []
-    @State private var currentPhotoIndex = 0
-    @State private var message: String
+    @State private var photos: [EditablePhoto] = []
+    @State private var draggedPhoto: EditablePhoto?
+    /// Existing files the user replaced or removed; deleted from disk on save.
+    @State private var removedFileNames: [String] = []
+    @State private var additionItems: [PhotosPickerItem] = []
+    /// Single-photo replacement: which slot, and the picked item.
+    @State private var replaceIndex: Int?
+    @State private var replaceItem: PhotosPickerItem?
+    @State private var showReplacePicker = false
+    @State private var cropTarget: PhotoCropTarget?
+    @State private var name: String
     @State private var notes: String
     @State private var date: Date
-    @State private var tag: MemoryTag
-    @State private var cropOffsetX: CGFloat
-    @State private var cropOffsetY: CGFloat
-    @State private var dragStartX: CGFloat
-    @State private var dragStartY: CGFloat
-    @State private var appeared = false
+    @State private var selectedCategory: MemoryTag
     @State private var isSaving = false
     @State private var showSaveError = false
-    @State private var didChangePhotos = false
+    /// Set once the existing photos have been decoded, so the initial load can
+    /// never overwrite photos the user picked while it was still running.
+    @State private var didLoadPhotos = false
+
+    private let thumbColumns = [GridItem(.adaptive(minimum: 72), spacing: 8)]
 
     init(memory: Memory) {
         self.memory = memory
-        _message = State(initialValue: memory.message)
+        _name = State(initialValue: memory.message)
         _notes = State(initialValue: memory.notes)
         _date = State(initialValue: memory.date)
-        _tag = State(initialValue: MemoryTag(rawValue: memory.tag) ?? .none)
-        _cropOffsetX = State(initialValue: CGFloat(memory.cropOffsetX))
-        _cropOffsetY = State(initialValue: CGFloat(memory.cropOffsetY))
-        _dragStartX = State(initialValue: CGFloat(memory.cropOffsetX))
-        _dragStartY = State(initialValue: CGFloat(memory.cropOffsetY))
+        _selectedCategory = State(initialValue: MemoryTag(rawValue: memory.tag) ?? .none)
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    photoSection
-                    tagPicker
-
-                    fieldCard(label: String(localized: "form.message")) {
-                        TextField(String(localized: "form.message.placeholder"), text: $message, axis: .vertical)
-                            .font(.system(size: 17, weight: .regular, design: .serif))
-                            .foregroundStyle(AppTheme.textPrimary)
-                            .lineLimit(3...6)
-                            .tint(AppTheme.accent)
-                    }
-
-                    fieldCard(label: String(localized: "form.description")) {
-                        TextField(String(localized: "form.description.placeholder"), text: $notes, axis: .vertical)
-                            .font(.system(size: 15, weight: .regular, design: .serif))
-                            .foregroundStyle(AppTheme.textPrimary)
-                            .lineLimit(3...8)
-                            .tint(AppTheme.accent)
-                    }
-
-                    fieldCard(label: String(localized: "form.date")) {
-                        DatePicker(
-                            String(localized: "form.date.pick"),
-                            selection: $date,
-                            in: ...Date.now,
-                            displayedComponents: .date
-                        )
-                        .datePickerStyle(.compact)
-                        .labelsHidden()
-                        .tint(AppTheme.accent)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 20)
+            Form {
+                photosSection
+                categorySection
+                nameSection
+                descriptionSection
+                dateSection
             }
-            .scrollDismissesKeyboard(.interactively)
-            .background(AppTheme.background)
+            .scrollContentBackground(.visible)
+            .background(Color(.systemGroupedBackground))
             .navigationTitle(String(localized: "edit.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(String(localized: "form.cancel")) { dismiss() }
-                        .foregroundStyle(AppTheme.textSecondary)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(String(localized: "form.save")) { save() }
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(AppTheme.accent)
-                        .disabled(isSaving)
+                        .fontWeight(.semibold)
+                        .disabled(photos.isEmpty || isSaving)
                 }
             }
-            .onChange(of: selectedPhotos) { _, newValue in
-                Task {
-                    var loaded: [UIImage] = []
-                    for item in newValue {
-                        if let data = try? await item.loadTransferable(type: Data.self),
-                           let image = UIImage(data: data) {
-                            loaded.append(image)
-                        }
-                    }
-                    if !loaded.isEmpty {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            images = loaded
-                            currentPhotoIndex = 0
-                            cropOffsetX = 0.5
-                            cropOffsetY = 0.5
-                            didChangePhotos = true
-                        }
-                    }
-                }
-            }
-            .onAppear {
-                images = memory.allImages
-                withAnimation(.easeOut(duration: 0.4)) { appeared = true }
+            .onChange(of: additionItems) { _, newValue in applyAdditions(newValue) }
+            .photosPicker(isPresented: $showReplacePicker, selection: $replaceItem, matching: .images)
+            .onChange(of: replaceItem) { _, newValue in applyReplacement(newValue) }
+            .task {
+                guard !didLoadPhotos else { return }
+                let loaded = await fetchPhotos()
+                guard !didLoadPhotos else { return }
+                didLoadPhotos = true
+                // Photos the user picked while the decode was still running are
+                // kept and appended after the memory's existing ones, instead
+                // of being overwritten by the load.
+                photos = Array((loaded + photos).prefix(MemoryLimits.maxPhotos))
             }
             .alert(String(localized: "save.error.title"), isPresented: $showSaveError) {
                 Button("OK") {}
             } message: {
                 Text("save.error.message")
             }
+            .sheet(item: $cropTarget) { target in
+                if photos.indices.contains(target.id) {
+                    CropAdjustView(
+                        image: photos[target.id].image,
+                        initialCrop: CGPoint(x: photos[target.id].cropX, y: photos[target.id].cropY)
+                    ) { newCrop in
+                        guard photos.indices.contains(target.id) else { return }
+                        photos[target.id].cropX = newCrop.x
+                        photos[target.id].cropY = newCrop.y
+                    }
+                }
+            }
         }
+        .tint(AppTheme.accent)
     }
 
-    // MARK: - Photo section
+    // MARK: - Photos
 
-    private var photoSection: some View {
-        ZStack {
-            if !images.isEmpty {
-                VStack(spacing: 10) {
-                    TabView(selection: $currentPhotoIndex) {
-                        ForEach(Array(images.enumerated()), id: \.offset) { index, img in
-                            GeometryReader { geo in
-                                let side = geo.size.width
-                                let imgW = img.size.width
-                                let imgH = img.size.height
-                                let aspect = imgW / imgH
-                                let isPortrait = aspect < 1
-                                let scaledW = isPortrait ? side : side * aspect
-                                let scaledH = isPortrait ? side / aspect : side
-                                let overflowX = max(scaledW - side, 0)
-                                let overflowY = max(scaledH - side, 0)
+    private var photosSubtitle: String {
+        String(format: String(localized: "form.photos.subtitle"), MemoryLimits.maxPhotos)
+    }
 
-                                Color.clear
-                                    .overlay {
-                                        Image(uiImage: img)
-                                            .resizable()
-                                            .scaledToFill()
-                                            .offset(
-                                                x: index == 0 ? overflowX * (0.5 - cropOffsetX) : 0,
-                                                y: index == 0 ? overflowY * (0.5 - cropOffsetY) : 0
-                                            )
-                                    }
-                                    .frame(width: side, height: side)
-                                    .clipped()
-                            }
-                            .aspectRatio(1, contentMode: .fit)
-                            .tag(index)
-                        }
-                    }
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    .aspectRatio(1, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .overlay(alignment: .topTrailing) {
-                        PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 6, matching: .images) {
-                            Image(systemName: "arrow.triangle.2.circlepath.camera.fill")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: 32, height: 32)
-                                .background(.black.opacity(0.5), in: Circle())
-                        }
-                        .padding(10)
-                    }
-
-                    if images.count > 1 {
-                        HStack(spacing: 5) {
-                            ForEach(0..<images.count, id: \.self) { i in
-                                Capsule()
-                                    .fill(i == currentPhotoIndex ? AppTheme.accent : AppTheme.textSecondary.opacity(0.3))
-                                    .frame(width: i == currentPhotoIndex ? 16 : 6, height: 6)
-                                    .animation(.spring(response: 0.3), value: currentPhotoIndex)
-                            }
-                        }
-                    }
+    @ViewBuilder
+    private var photosSection: some View {
+        Section {
+            if photos.isEmpty {
+                PhotosPicker(selection: $additionItems, maxSelectionCount: MemoryLimits.maxPhotos, matching: .images) {
+                    choosePhotosPlaceholder
                 }
             } else {
-                PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 6, matching: .images) {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(AppTheme.cardBackground)
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay {
-                            VStack(spacing: 12) {
-                                Image(systemName: "plus.circle")
-                                    .font(.system(size: 40, weight: .thin))
-                                Text("form.choosePhotos")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .tracking(1)
-                                    .textCase(.uppercase)
-                            }
-                            .foregroundStyle(AppTheme.textSecondary)
-                        }
+                PhotosPicker(
+                    selection: $additionItems,
+                    maxSelectionCount: max(MemoryLimits.maxPhotos - photos.count, 1),
+                    matching: .images
+                ) {
+                    addMorePhotosRow
                 }
-            }
-        }
-    }
+                .disabled(photos.count >= MemoryLimits.maxPhotos)
 
-    // MARK: - Tag picker
-
-    private var tagPicker: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("form.tag")
-                .font(.system(size: 11, weight: .bold))
-                .tracking(2)
-                .foregroundStyle(AppTheme.accent)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(MemoryTag.allCases) { t in
-                        Button {
-                            withAnimation(.spring(response: 0.3)) { tag = t }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: t.icon)
-                                    .font(.system(size: 12))
-                                Text(t.label)
-                                    .font(.system(size: 13, weight: .medium))
+                LazyVGrid(columns: thumbColumns, spacing: 8) {
+                    ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
+                        Menu {
+                            Button {
+                                replaceIndex = index
+                                showReplacePicker = true
+                            } label: {
+                                Label("photo.change", systemImage: "photo")
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .foregroundStyle(tag == t ? .white : AppTheme.textPrimary)
-                            .background(tag == t ? AppTheme.accent : AppTheme.cardBackground, in: Capsule())
+                            Button {
+                                cropTarget = PhotoCropTarget(id: index)
+                            } label: {
+                                Label("photo.crop", systemImage: "crop")
+                            }
+                            Button(role: .destructive) {
+                                removePhoto(at: index)
+                            } label: {
+                                Label("photo.remove", systemImage: "trash")
+                            }
+                        } label: {
+                            thumbnail(photo)
                         }
+                        .onDrag {
+                            draggedPhoto = photo
+                            return NSItemProvider(object: photo.id.uuidString as NSString)
+                        }
+                        .onDrop(
+                            of: [.text],
+                            delegate: PhotoReorderDropDelegate(item: photo, items: $photos, dragged: $draggedPhoto)
+                        )
                     }
                 }
+                .padding(.vertical, 6)
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(AppTheme.cardBackground))
     }
 
-    private func fieldCard<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label)
-                .font(.system(size: 11, weight: .bold))
-                .tracking(2)
+    /// Prominent centered call-to-action shown when there are no photos.
+    private var choosePhotosPlaceholder: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 30))
                 .foregroundStyle(AppTheme.accent)
-            content()
+                .frame(width: 84, height: 84)
+                .background(Color(.systemGray5), in: Circle())
+
+            Text("form.choosePhotos")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Text(photosSubtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(AppTheme.cardBackground))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+    }
+
+    /// Compact row to add more photos.
+    private var addMorePhotosRow: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.title2)
+                .foregroundStyle(AppTheme.accent)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("form.addPhotos")
+                    .foregroundStyle(AppTheme.accent)
+                Text(photosSubtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func thumbnail(_ photo: EditablePhoto) -> some View {
+        GeometryReader { geo in
+            let side = geo.size.width
+            let crop = SquareCropGeometry(imageSize: photo.image.size, side: side)
+
+            Color.clear
+                .overlay {
+                    Image(uiImage: photo.image)
+                        .resizable()
+                        .scaledToFill()
+                        .offset(crop.offset(cropX: photo.cropX, cropY: photo.cropY))
+                }
+                .frame(width: side, height: side)
+                .clipped()
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    // MARK: - Category
+
+    private var categorySection: some View {
+        Section {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(MemoryTag.allCases) { category in
+                        categoryChip(category)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .listRowBackground(Color(.systemGroupedBackground))
+        } header: {
+            Text("form.section.category").textCase(nil)
+        }
+    }
+
+    private func categoryChip(_ category: MemoryTag) -> some View {
+        let isSelected = selectedCategory == category
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) { selectedCategory = category }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: category.icon)
+                Text(category == .none ? String(localized: "tag.none") : category.label)
+            }
+            .font(.subheadline.weight(isSelected ? .semibold : .regular))
+            .foregroundStyle(isSelected ? .white : .primary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(isSelected ? AppTheme.accent : Color(.secondarySystemGroupedBackground), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Text fields
+
+    private var nameSection: some View {
+        Section {
+            TextField(String(localized: "form.message.placeholder"), text: $name)
+        } header: {
+            Text("form.section.name").textCase(nil)
+        }
+    }
+
+    private var descriptionSection: some View {
+        Section {
+            TextField(String(localized: "form.description.placeholder"), text: $notes, axis: .vertical)
+                .lineLimit(3...6)
+        } header: {
+            Text("form.section.description").textCase(nil)
+        }
+    }
+
+    private var dateSection: some View {
+        Section {
+            DatePicker(
+                String(localized: "form.section.date"),
+                selection: $date,
+                in: ...Date.now,
+                displayedComponents: .date
+            )
+        }
+    }
+
+    // MARK: - Photo operations
+
+    /// Decodes the photos off the main thread, downsampled so a full memory
+    /// (up to `MemoryLimits.maxPhotos`) doesn't exhaust memory or freeze the
+    /// presentation.
+    private func fetchPhotos() async -> [EditablePhoto] {
+        let names = memory.allImageFileNames
+        let crops = names.indices.map { memory.cropOffset(at: $0) }
+        let loaded = await Task.detached(priority: .userInitiated) {
+            names.enumerated().compactMap { index, name -> (String, UIImage, Int)? in
+                LocalStore.shared.loadDownscaledImage(named: name, maxPixel: 1400).map { (name, $0, index) }
+            }
+        }.value
+        return loaded.map { name, image, index in
+            EditablePhoto(image: image, fileName: name, cropX: crops[index].x, cropY: crops[index].y)
+        }
+    }
+
+    /// Appends the newly picked photos (up to the limit), then clears the
+    /// picker selection so the next pick adds more.
+    private func applyAdditions(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        Task {
+            var loaded: [UIImage] = []
+            for item in items {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data) {
+                    loaded.append(image)
+                }
+            }
+            additionItems = []
+            guard !loaded.isEmpty else { return }
+            let room = max(MemoryLimits.maxPhotos - photos.count, 0)
+            let toAdd = Array(loaded.prefix(room))
+            guard !toAdd.isEmpty else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                photos.append(contentsOf: toAdd.map { EditablePhoto(image: $0, fileName: nil) })
+            }
+        }
+    }
+
+    /// Replaces a single photo (the one whose menu was used) with one new pick.
+    private func applyReplacement(_ item: PhotosPickerItem?) {
+        guard let item, let index = replaceIndex else { return }
+        Task {
+            defer {
+                replaceItem = nil
+                replaceIndex = nil
+            }
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data),
+                  photos.indices.contains(index) else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                if let old = photos[index].fileName {
+                    removedFileNames.append(old)
+                }
+                photos[index] = EditablePhoto(image: image, fileName: nil)
+            }
+        }
+    }
+
+    private func removePhoto(at index: Int) {
+        guard photos.indices.contains(index) else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+            if let old = photos[index].fileName {
+                removedFileNames.append(old)
+            }
+            photos.remove(at: index)
+        }
     }
 
     // MARK: - Save
 
     private func save() {
+        guard !photos.isEmpty else { return }
         isSaving = true
 
-        if didChangePhotos && !images.isEmpty {
-            for name in memory.allImageFileNames {
-                LocalStore.shared.deleteImage(named: name)
+        var saved: [(name: String, cropX: CGFloat, cropY: CGFloat)] = []
+        for photo in photos {
+            if let existing = photo.fileName {
+                saved.append((existing, photo.cropX, photo.cropY))
+            } else if let newName = LocalStore.shared.saveImage(photo.image) {
+                saved.append((newName, photo.cropX, photo.cropY))
             }
-
-            guard let mainName = LocalStore.shared.saveImage(images[0]) else {
-                isSaving = false
-                showSaveError = true
-                return
-            }
-            memory.cloudFileName = mainName
-
-            var extras: [String] = []
-            for img in images.dropFirst() {
-                if let name = LocalStore.shared.saveImage(img) {
-                    extras.append(name)
-                }
-            }
-            memory.extraImageFileNames = extras
         }
 
-        memory.message = message
+        guard let first = saved.first else {
+            isSaving = false
+            showSaveError = true
+            return
+        }
+
+        for fileName in removedFileNames {
+            LocalStore.shared.deleteImage(named: fileName)
+        }
+
+        memory.imageFileName = first.name
+        memory.cropOffsetX = Double(first.cropX)
+        memory.cropOffsetY = Double(first.cropY)
+        memory.extraImageFileNames = saved.dropFirst().map(\.name)
+        memory.extraCropOffsetsX = saved.dropFirst().map { Double($0.cropX) }
+        memory.extraCropOffsetsY = saved.dropFirst().map { Double($0.cropY) }
+        memory.message = name
         memory.notes = notes
         memory.date = date
-        memory.tag = tag.rawValue
-        memory.cropOffsetX = Double(cropOffsetX)
-        memory.cropOffsetY = Double(cropOffsetY)
+        memory.tag = selectedCategory.rawValue
+
+        // Persist immediately so ContentView's save observer mirrors the edit
+        // to the widget and watch without waiting for an autosave.
+        try? memory.modelContext?.save()
 
         dismiss()
     }
