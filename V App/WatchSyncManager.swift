@@ -142,7 +142,13 @@ final class WatchSyncManager: NSObject, WCSessionDelegate {
                 }
             }
             for snapshot in snapshots where pendingIDs.contains(snapshot.id) {
-                guard let data = Self.imageData(for: snapshot.id) else { continue }
+                guard let data = Self.imageData(for: snapshot.id) else {
+                    // The id was claimed before the work was done so parallel
+                    // syncs can't double-queue it; give the claim back when
+                    // there's nothing to send, or it never retries this launch.
+                    Self.shared.releaseQueuedImage(snapshot.id)
+                    continue
+                }
                 session.transferUserInfo([
                     "id": snapshot.id,
                     "message": snapshot.message,
@@ -152,6 +158,13 @@ final class WatchSyncManager: NSObject, WCSessionDelegate {
                 ])
             }
         }
+    }
+
+    /// Drops an image id's "already queued" claim so a later sync can retry it.
+    private func releaseQueuedImage(_ id: String) {
+        stateLock.lock()
+        state.queuedImageIDs.remove(id)
+        stateLock.unlock()
     }
 
     /// JPEG sized to fit `maxPayloadBytes`: steps quality down first, then

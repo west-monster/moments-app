@@ -63,10 +63,6 @@ final class Memory {
         return LocalStore.shared.loadImage(named: imageFileName)
     }
 
-    var allImages: [UIImage] {
-        allImageFileNames.compactMap { LocalStore.shared.loadImage(named: $0) }
-    }
-
     var formattedDate: String {
         let formatter = DateFormatter()
         formatter.locale = Locale.current
@@ -122,6 +118,5 @@ enum MemoryTag: String, CaseIterable, Identifiable {
 
 enum AlbumContent {
     static let dedicatoria = String(localized: "splash.dedication")
-    static let titulo = String(localized: "splash.title")
-    static let tituloRecurrente = String(localized: "splash.title.returning")
+    static let titulo = String(localized: "splash.title.returning")
 }

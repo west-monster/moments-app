@@ -91,9 +91,18 @@ struct MemoryCardView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .task(id: memory.persistentModelID) {
+        // Without an explicit shape the tap region overflows the card and
+        // swallows taps meant for the category chips sitting above it.
+        .contentShape(Rectangle())
+        // Keyed on the file name, not the model ID: editing a memory's photo
+        // keeps the same ID, so keying on that left the card showing the old
+        // image until the view was rebuilt.
+        .task(id: memory.imageFileName) {
             let fileName = memory.imageFileName
-            guard !fileName.isEmpty else { return }
+            guard !fileName.isEmpty else {
+                loadedImage = nil
+                return
+            }
             let image = await Task.detached {
                 LocalStore.shared.loadDownscaledImage(named: fileName, maxPixel: 1200)
             }.value

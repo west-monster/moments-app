@@ -35,6 +35,9 @@ struct EditMemoryView: View {
     @State private var selectedCategory: MemoryTag
     @State private var isSaving = false
     @State private var showSaveError = false
+    /// Set once the existing photos have been decoded, so the initial load can
+    /// never overwrite photos the user picked while it was still running.
+    @State private var didLoadPhotos = false
 
     private let thumbColumns = [GridItem(.adaptive(minimum: 72), spacing: 8)]
 
@@ -72,7 +75,16 @@ struct EditMemoryView: View {
             .onChange(of: additionItems) { _, newValue in applyAdditions(newValue) }
             .photosPicker(isPresented: $showReplacePicker, selection: $replaceItem, matching: .images)
             .onChange(of: replaceItem) { _, newValue in applyReplacement(newValue) }
-            .task { photos = await fetchPhotos() }
+            .task {
+                guard !didLoadPhotos else { return }
+                let loaded = await fetchPhotos()
+                guard !didLoadPhotos else { return }
+                didLoadPhotos = true
+                // Photos the user picked while the decode was still running are
+                // kept and appended after the memory's existing ones, instead
+                // of being overwritten by the load.
+                photos = Array((loaded + photos).prefix(MemoryLimits.maxPhotos))
+            }
             .alert(String(localized: "save.error.title"), isPresented: $showSaveError) {
                 Button("OK") {}
             } message: {

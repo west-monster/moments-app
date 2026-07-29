@@ -20,7 +20,7 @@ struct SplashView: View {
     }
 
     private var mainTitle: String {
-        isFirstLaunch ? AlbumContent.titulo : AlbumContent.tituloRecurrente
+        AlbumContent.titulo
     }
 
     var body: some View {

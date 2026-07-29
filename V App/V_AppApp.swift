@@ -29,18 +29,41 @@ struct V_AppApp: App {
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([Memory.self])
+        let configuration = ModelConfiguration(schema: schema)
         do {
-            return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema)])
+            return try ModelContainer(for: schema, configurations: [configuration])
         } catch {
-            let storeURL = URL.applicationSupportDirectory.appending(path: "default.store")
-            try? FileManager.default.removeItem(at: storeURL)
+            // Ask the configuration where the store actually is instead of
+            // guessing: with App Groups entitlements SwiftData puts it in the
+            // group container, not the app's own Application Support, so the
+            // old hardcoded path deleted nothing and this retry failed too.
+            removeStore(at: configuration.url)
+            if let recovered = try? ModelContainer(for: schema, configurations: [configuration]) {
+                return recovered
+            }
+            // Last resort: run from memory rather than crash on every launch.
+            // `ContentView` repopulates the library from `memories.json`, and
+            // keeps writing that snapshot, so the app stays usable.
             do {
-                return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema)])
+                return try ModelContainer(
+                    for: schema,
+                    configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+                )
             } catch {
                 fatalError("Failed to create ModelContainer even in-memory: \(error)")
             }
         }
     }()
+
+    /// Deletes a SwiftData store together with its SQLite sidecar files —
+    /// leaving `-wal`/`-shm` behind can resurrect the broken state.
+    private static func removeStore(at url: URL) {
+        let directory = url.deletingLastPathComponent()
+        let name = url.lastPathComponent
+        for fileName in [name, name + "-wal", name + "-shm"] {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(fileName))
+        }
+    }
 
     var body: some Scene {
         WindowGroup {

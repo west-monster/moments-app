@@ -105,11 +105,17 @@ private struct TimelineThumb: View {
         }
         .frame(width: 64, height: 64)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .task(id: memory.persistentModelID) {
+        .task(id: memory.imageFileName) {
             let name = memory.imageFileName
-            guard !name.isEmpty else { return }
+            guard !name.isEmpty else {
+                image = nil
+                return
+            }
             image = await Task.detached(priority: .userInitiated) {
-                LocalStore.shared.loadImage(named: name)
+                // Downsampled to the 64pt box (3x) — loading the full-size
+                // photo for a thumbnail also evicted everything else from the
+                // shared image cache.
+                LocalStore.shared.loadDownscaledImage(named: name, maxPixel: 200)
             }.value
         }
     }

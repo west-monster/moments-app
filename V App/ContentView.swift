@@ -136,7 +136,10 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showAddSheet) {
-            AddMemoryView(nextOrder: memories.count)
+            // One past the highest order in use, not the count: after a
+            // deletion the count collides with an existing order and the two
+            // memories sort unpredictably.
+            AddMemoryView(nextOrder: (memories.map(\.order).max() ?? -1) + 1)
                 // Page-sized on iPad/Mac so the square photo plus the form
                 // fit; no effect on iPhone.
                 .presentationSizing(.page)

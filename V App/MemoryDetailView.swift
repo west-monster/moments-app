@@ -38,8 +38,8 @@ struct MemoryDetailView: View {
             } else {
                 GeometryReader { geo in
                     // One photo size for every page, measured once here, so the
-                    // box is identical across memories.
-                    let side = min(geo.size.width - 48, AppTheme.Layout.contentMaxWidth, geo.size.height * 0.5)
+                    // band is identical across memories.
+                    let side = min(geo.size.width, geo.size.height * 0.58)
                     TabView(selection: $currentIndex) {
                         ForEach(Array(memories.enumerated()), id: \.element.persistentModelID) { index, memory in
                             MemoryPageView(
@@ -90,15 +90,21 @@ struct MemoryDetailView: View {
     private func deleteMemory() {
         guard currentIndex < memories.count else { return }
         let memory = memories[currentIndex]
+        // Counted before the delete: reading `memories` afterwards depends on
+        // whether the @Query has already refreshed, which isn't guaranteed
+        // within this call and left the pager on a stale index.
+        let remaining = memories.count - 1
+
         for name in memory.allImageFileNames {
             LocalStore.shared.deleteImage(named: name)
         }
         modelContext.delete(memory)
-        if memories.count <= 1 {
+
+        if remaining <= 0 {
             dismiss()
-        } else if currentIndex >= memories.count - 1 {
+        } else if currentIndex > remaining - 1 {
             withAnimation {
-                currentIndex = max(0, memories.count - 2)
+                currentIndex = remaining - 1
             }
         }
     }
@@ -110,7 +116,8 @@ struct MemoryDetailView: View {
 /// swiping between memories doesn't decode full-resolution images in `body`.
 private struct MemoryPageView: View {
     let memory: Memory
-    /// Fixed photo box size, shared by every page (passed from the container).
+    /// Fixed photo band height, shared by every page (passed from the
+    /// container).
     let photoSide: CGFloat
     let onShare: () -> Void
     let onEdit: () -> Void
@@ -120,27 +127,34 @@ private struct MemoryPageView: View {
     @State private var photoIndex = 0
 
     /// Reserved height for the native page dots below the photo, kept even for
-    /// single-photo memories so the photo sits at the same Y everywhere.
+    /// single-photo memories so the text sits at the same Y everywhere.
     private let dotsReserve: CGFloat = 34
 
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer(minLength: 0)
-
+        VStack(spacing: 0) {
+            // Edge to edge and flush with the top of the sheet — the photo owns
+            // the whole upper band, no side margins.
             photoCarousel
 
-            // Fixed-height text region keeps the photo and the actions at the
-            // same vertical position across memories.
-            textBlock
-                .frame(height: 140, alignment: .top)
+            VStack(spacing: 16) {
+                // The photo can't fill a tall phone, so the leftover height is
+                // split above and below the caption instead of collecting into
+                // one hole between the text and the bar.
+                Spacer(minLength: 8)
 
-            actionRow
+                textBlock
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 8)
+
+                actionRow
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 24)
-        .task(id: memory.persistentModelID) {
+        // Keyed on the file names so editing a memory's photos reloads the
+        // carousel; the model ID doesn't change when the photos do.
+        .task(id: memory.allImageFileNames) {
             let names = memory.allImageFileNames
             let loaded = await Task.detached(priority: .userInitiated) {
                 // Downsampled so a full carousel of large photos can't exhaust
@@ -148,6 +162,7 @@ private struct MemoryPageView: View {
                 names.compactMap { LocalStore.shared.loadDownscaledImage(named: $0, maxPixel: 1400) }
             }.value
             images = loaded
+            photoIndex = 0
         }
     }
 
@@ -185,38 +200,48 @@ private struct MemoryPageView: View {
         }
     }
 
-    // MARK: - Actions (flat SF Symbols, inline with the content)
+    // MARK: - Actions
 
+    /// Styled after the home screen's floating tab bar: a capsule that hugs its
+    /// three items, centered, lifted off the page by a soft shadow. No
+    /// hairlines — the tab bar has none either, and the labels under each icon
+    /// already mark where one button ends and the next begins.
     private var actionRow: some View {
-        HStack(spacing: 0) {
-            actionButton("square.and.arrow.up", tint: AppTheme.accent, action: onShare)
-            Spacer()
-            actionButton("pencil", tint: AppTheme.accent, action: onEdit)
-            Spacer()
-            actionButton("trash", tint: .red, role: .destructive, action: onDelete)
+        HStack(spacing: 2) {
+            actionButton("square.and.arrow.up", title: "action.share", tint: AppTheme.accent, action: onShare)
+            actionButton("pencil", title: "action.edit", tint: AppTheme.accent, action: onEdit)
+            actionButton("trash", title: "action.delete", tint: .red, role: .destructive, action: onDelete)
         }
-        .padding(.horizontal, 44)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background(Color(.secondarySystemBackground), in: Capsule())
+        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
     }
 
     private func actionButton(
         _ icon: String,
+        title: LocalizedStringKey,
         tint: Color,
         role: ButtonRole? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(role: role, action: action) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundStyle(tint)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .medium))
+                Text(title)
+                    .font(.caption2.weight(.medium))
+            }
+            .foregroundStyle(tint)
+            .frame(width: 74, height: 48)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
     }
 
     // MARK: - Photo carousel
 
-    /// Same-size square using each photo's stored crop, with native page dots
+    /// Full-width band using each photo's stored crop, with native page dots
     /// (tinted with the accent) rendered on white below the photo.
     @ViewBuilder
     private var photoCarousel: some View {
@@ -234,17 +259,17 @@ private struct MemoryPageView: View {
                 photoPage(croppedPhoto(uiImage, index: 0, side: side))
             } else {
                 photoPage(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    Rectangle()
                         .fill(Color(.secondarySystemBackground))
-                        .frame(width: side, height: side)
+                        .frame(height: side)
                         .overlay { ProgressView() }
                 )
             }
         }
-        .frame(width: side, height: side + dotsReserve)
+        .frame(height: side + dotsReserve)
     }
 
-    /// Top-aligns the square within its box so the native dots sit in the
+    /// Top-aligns the photo within its band so the native dots sit in the
     /// reserved space beneath it.
     private func photoPage<Content: View>(_ content: Content) -> some View {
         VStack(spacing: 0) {
@@ -253,17 +278,26 @@ private struct MemoryPageView: View {
         }
     }
 
+    /// Aspect-fills the full-width band using the crop stored for the photo, so
+    /// the framing matches the rest of the app. No corner radius — the band
+    /// runs edge to edge.
     private func croppedPhoto(_ img: UIImage, index: Int, side: CGFloat) -> some View {
-        let crop = SquareCropGeometry(imageSize: img.size, side: side)
         let position = memory.cropOffset(at: index)
-        return Color.clear
-            .overlay {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
-                    .offset(crop.offset(cropX: position.x, cropY: position.y))
-            }
-            .frame(width: side, height: side)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        return GeometryReader { geo in
+            let scale = max(geo.size.width / max(img.size.width, 1),
+                            geo.size.height / max(img.size.height, 1))
+            let width = img.size.width * scale
+            let height = img.size.height * scale
+
+            Image(uiImage: img)
+                .resizable()
+                .frame(width: width, height: height)
+                .offset(
+                    x: -(width - geo.size.width) * position.x,
+                    y: -(height - geo.size.height) * position.y
+                )
+        }
+        .frame(height: side)
+        .clipped()
     }
 }

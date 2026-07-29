@@ -61,6 +61,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AB00000000000000000003"
             BuildableName = "Moments Watch App.app"
+            BlueprintName = "Moments Watch App"
             ReferencedContainer = "container:V App.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -77,6 +78,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AB00000000000000000003"
             BuildableName = "Moments Watch App.app"
+            BlueprintName = "Moments Watch App"
             ReferencedContainer = "container:V App.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

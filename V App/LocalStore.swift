@@ -24,6 +24,12 @@ final class LocalStore {
     private let fileManager = FileManager.default
     private var cache = NSCache<NSString, UIImage>()
 
+    /// Downscaled entries are cached under `name#maxPixel`, which `NSCache`
+    /// can't enumerate, so the derived keys are tracked here to be evicted
+    /// alongside their source image. Written from background decode tasks.
+    private let variantLock = NSLock()
+    private var variantKeys: [String: Set<String>] = [:]
+
     private init() {
         cache.countLimit = 50
         ensureDirectories()
@@ -104,11 +110,22 @@ final class LocalStore {
         }
         let image = UIImage(cgImage: cgImage)
         cache.setObject(image, forKey: key)
+        variantLock.lock()
+        variantKeys[fileName, default: []].insert(key as String)
+        variantLock.unlock()
         return image
     }
 
     func deleteImage(named fileName: String) {
         cache.removeObject(forKey: fileName as NSString)
+
+        variantLock.lock()
+        let derived = variantKeys.removeValue(forKey: fileName) ?? []
+        variantLock.unlock()
+        for key in derived {
+            cache.removeObject(forKey: key as NSString)
+        }
+
         let url = imagesURL.appendingPathComponent(fileName)
         try? fileManager.removeItem(at: url)
     }
