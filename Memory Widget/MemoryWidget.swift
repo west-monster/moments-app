@@ -29,8 +29,7 @@ private enum SharedData {
         return UIImage(data: data)
     }
 
-    /// Fixed editorial accent shared with the app (mint on dark, bright blue
-    /// on light).
+    /// Fixed editorial accent shared with the app (bright blue).
     static var accentColor: Color { AccentPalette.accent }
 }
 

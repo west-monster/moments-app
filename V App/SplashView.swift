@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SplashView: View {
     @Binding var showSplash: Bool
-    let isFirstLaunch: Bool
 
     @State private var titleOpacity: Double = 0
     @State private var titleOffset: CGFloat = 30
@@ -15,8 +14,12 @@ struct SplashView: View {
     /// user's Dynamic Type setting.
     @ScaledMetric(relativeTo: .largeTitle) private var titleSize: CGFloat = 48
 
+    /// One label for every launch. The first-launch dedication is gone, and with
+    /// it the `hasLaunchedBefore` flag that drove it — the flag was read into
+    /// state from the parent's `onAppear`, which runs *after* this view's, so
+    /// the first frame always rendered the first-launch text regardless.
     private var topLabel: String {
-        isFirstLaunch ? AlbumContent.dedicatoria : String(localized: "splash.welcomeBack")
+        String(localized: "splash.welcomeBack")
     }
 
     private var mainTitle: String {

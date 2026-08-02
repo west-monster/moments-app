@@ -1,6 +1,5 @@
 import SwiftUI
 import SwiftData
-import UIKit
 
 @Model
 final class Memory {
@@ -58,11 +57,6 @@ final class Memory {
         return CGPoint(x: extraCropOffsetsX[extraIndex], y: extraCropOffsetsY[extraIndex])
     }
 
-    var uiImage: UIImage? {
-        guard !imageFileName.isEmpty else { return nil }
-        return LocalStore.shared.loadImage(named: imageFileName)
-    }
-
     var formattedDate: String {
         let formatter = DateFormatter()
         formatter.locale = Locale.current
@@ -117,6 +111,5 @@ enum MemoryTag: String, CaseIterable, Identifiable {
 // MARK: - Splash content
 
 enum AlbumContent {
-    static let dedicatoria = String(localized: "splash.dedication")
     static let titulo = String(localized: "splash.title.returning")
 }

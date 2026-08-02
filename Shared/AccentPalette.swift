@@ -1,10 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// Fixed palette, compiled into both the app and the widget. No user
-/// selection: mint carries the accent on dark surfaces, bright blue on light
-/// ones (mint has too little contrast on white), and the highlight block is
-/// always bright blue.
+/// Fixed palette, compiled into the app, the widget and the watch app. No user
+/// selection: bright blue carries the accent on iOS, which renders light only,
+/// and mint on watchOS, which is always dark (mint has too little contrast on
+/// white).
 enum AccentPalette {
     /// Vivid blue for buttons, icons, and pills.
     static let brightBlue = Color(red: 0.11, green: 0.45, blue: 0.95)
@@ -14,16 +14,19 @@ enum AccentPalette {
     /// Dark ink for text sitting on mint.
     static let inkOnMint = Color(red: 0.02, green: 0.2, blue: 0.17)
 
-    /// Accent for icons, eyebrows, dividers, and pill buttons: mint on dark
-    /// surfaces, bright blue on light ones. watchOS is always dark and has
-    /// no trait-based dynamic `UIColor`, so it resolves to mint directly.
+    /// Accent for icons, eyebrows, dividers, and pill buttons: mint on watchOS,
+    /// which is always a dark surface, bright blue everywhere else.
+    ///
+    /// Not a trait-based dynamic `UIColor`: the iOS app renders light only
+    /// (`V_AppApp` pins `.preferredColorScheme(.light)`) so the dark branch
+    /// could never resolve, and a static color is also safe to read from the
+    /// background renderers — a dynamic one has no trait collection to resolve
+    /// against off the main thread.
     static let accent: Color = {
         #if os(watchOS)
         mint
         #else
-        Color(UIColor { traits in
-            traits.userInterfaceStyle == .dark ? UIColor(mint) : UIColor(brightBlue)
-        })
+        brightBlue
         #endif
     }()
 
@@ -32,13 +35,7 @@ enum AccentPalette {
         #if os(watchOS)
         inkOnMint
         #else
-        Color(UIColor { traits in
-            traits.userInterfaceStyle == .dark ? UIColor(inkOnMint) : UIColor.white
-        })
+        .white
         #endif
     }()
-
-    /// Highlight block — bright blue with white ink.
-    static let highlight = brightBlue
-    static let onHighlight = Color.white
 }

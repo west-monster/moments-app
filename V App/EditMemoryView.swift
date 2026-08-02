@@ -24,8 +24,8 @@ struct EditMemoryView: View {
     /// Existing files the user replaced or removed; deleted from disk on save.
     @State private var removedFileNames: [String] = []
     @State private var additionItems: [PhotosPickerItem] = []
-    /// Single-photo replacement: which slot, and the picked item.
-    @State private var replaceIndex: Int?
+    /// Single-photo replacement: which slot (by id), and the picked item.
+    @State private var replaceID: UUID?
     @State private var replaceItem: PhotosPickerItem?
     @State private var showReplacePicker = false
     @State private var cropTarget: PhotoCropTarget?
@@ -35,6 +35,7 @@ struct EditMemoryView: View {
     @State private var selectedCategory: MemoryTag
     @State private var isSaving = false
     @State private var showSaveError = false
+    @FocusState private var focusedField: MemoryFormField?
     /// Set once the existing photos have been decoded, so the initial load can
     /// never overwrite photos the user picked while it was still running.
     @State private var didLoadPhotos = false
@@ -51,54 +52,63 @@ struct EditMemoryView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                photosSection
-                categorySection
-                nameSection
-                descriptionSection
-                dateSection
-            }
-            .scrollContentBackground(.visible)
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle(String(localized: "edit.title"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(String(localized: "form.cancel")) { dismiss() }
+            ScrollViewReader { proxy in
+                Form {
+                    photosSection
+                    CategoryFormSection(selected: $selectedCategory)
+                    nameSection
+                    descriptionSection
+                    dateSection
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "form.save")) { save() }
-                        .fontWeight(.semibold)
-                        .disabled(photos.isEmpty || isSaving)
+                // Matches the add form: tighter section gaps so the fields fit
+                // without scrolling on a standard phone.
+                .listSectionSpacing(.compact)
+                .scrollDismissesKeyboard(.interactively)
+                .scrollsFocusedFieldAboveKeyboard(focusedField, revision: notes, in: proxy)
+                .scrollContentBackground(.visible)
+                .background(Color(.systemGroupedBackground))
+                .navigationTitle(String(localized: "edit.title"))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(String(localized: "form.cancel")) { dismiss() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(String(localized: "form.save")) { save() }
+                            .fontWeight(.semibold)
+                            .disabled(photos.isEmpty || isSaving)
+                    }
                 }
-            }
-            .onChange(of: additionItems) { _, newValue in applyAdditions(newValue) }
-            .photosPicker(isPresented: $showReplacePicker, selection: $replaceItem, matching: .images)
-            .onChange(of: replaceItem) { _, newValue in applyReplacement(newValue) }
-            .task {
-                guard !didLoadPhotos else { return }
-                let loaded = await fetchPhotos()
-                guard !didLoadPhotos else { return }
-                didLoadPhotos = true
-                // Photos the user picked while the decode was still running are
-                // kept and appended after the memory's existing ones, instead
-                // of being overwritten by the load.
-                photos = Array((loaded + photos).prefix(MemoryLimits.maxPhotos))
-            }
-            .alert(String(localized: "save.error.title"), isPresented: $showSaveError) {
-                Button("OK") {}
-            } message: {
-                Text("save.error.message")
-            }
-            .sheet(item: $cropTarget) { target in
-                if photos.indices.contains(target.id) {
-                    CropAdjustView(
-                        image: photos[target.id].image,
-                        initialCrop: CGPoint(x: photos[target.id].cropX, y: photos[target.id].cropY)
-                    ) { newCrop in
-                        guard photos.indices.contains(target.id) else { return }
-                        photos[target.id].cropX = newCrop.x
-                        photos[target.id].cropY = newCrop.y
+                .onChange(of: additionItems) { _, newValue in applyAdditions(newValue) }
+                .photosPicker(isPresented: $showReplacePicker, selection: $replaceItem, matching: .images)
+                .onChange(of: replaceItem) { _, newValue in applyReplacement(newValue) }
+                .task {
+                    guard !didLoadPhotos else { return }
+                    let loaded = await fetchPhotos()
+                    guard !didLoadPhotos else { return }
+                    didLoadPhotos = true
+                    // Photos the user picked while the decode was still running are
+                    // kept and appended after the memory's existing ones, instead
+                    // of being overwritten by the load.
+                    photos = Array((loaded + photos).prefix(MemoryLimits.maxPhotos))
+                }
+                .alert(String(localized: "save.error.title"), isPresented: $showSaveError) {
+                    Button("OK") {}
+                } message: {
+                    Text("save.error.message")
+                }
+                .sheet(item: $cropTarget) { target in
+                    if let index = photos.firstIndex(where: { $0.id == target.id }) {
+                        CropAdjustView(
+                            image: photos[index].image,
+                            initialCrop: CGPoint(x: photos[index].cropX, y: photos[index].cropY)
+                        ) { newCrop in
+                            // Resolved again on commit — the grid may have been
+                            // reordered while the editor was open.
+                            guard let current = photos.firstIndex(where: { $0.id == target.id }) else { return }
+                            photos[current].cropX = newCrop.x
+                            photos[current].cropY = newCrop.y
+                        }
                     }
                 }
             }
@@ -130,21 +140,21 @@ struct EditMemoryView: View {
                 .disabled(photos.count >= MemoryLimits.maxPhotos)
 
                 LazyVGrid(columns: thumbColumns, spacing: 8) {
-                    ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
+                    ForEach(photos) { photo in
                         Menu {
                             Button {
-                                replaceIndex = index
+                                replaceID = photo.id
                                 showReplacePicker = true
                             } label: {
                                 Label("photo.change", systemImage: "photo")
                             }
                             Button {
-                                cropTarget = PhotoCropTarget(id: index)
+                                cropTarget = PhotoCropTarget(id: photo.id)
                             } label: {
                                 Label("photo.crop", systemImage: "crop")
                             }
                             Button(role: .destructive) {
-                                removePhoto(at: index)
+                                removePhoto(photo)
                             } label: {
                                 Label("photo.remove", systemImage: "trash")
                             }
@@ -226,59 +236,29 @@ struct EditMemoryView: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
-    // MARK: - Category
-
-    private var categorySection: some View {
-        Section {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(MemoryTag.allCases) { category in
-                        categoryChip(category)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            .listRowBackground(Color(.systemGroupedBackground))
-        } header: {
-            Text("form.section.category").textCase(nil)
-        }
-    }
-
-    private func categoryChip(_ category: MemoryTag) -> some View {
-        let isSelected = selectedCategory == category
-        return Button {
-            withAnimation(.easeInOut(duration: 0.2)) { selectedCategory = category }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: category.icon)
-                Text(category == .none ? String(localized: "tag.none") : category.label)
-            }
-            .font(.subheadline.weight(isSelected ? .semibold : .regular))
-            .foregroundStyle(isSelected ? .white : .primary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(isSelected ? AppTheme.accent : Color(.secondarySystemGroupedBackground), in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: - Text fields
 
     private var nameSection: some View {
         Section {
             TextField(String(localized: "form.message.placeholder"), text: $name)
+                .focused($focusedField, equals: .name)
+                .submitLabel(.next)
+                .onSubmit { focusedField = .notes }
         } header: {
             Text("form.section.name").textCase(nil)
         }
+        .id(MemoryFormField.name)
     }
 
     private var descriptionSection: some View {
         Section {
             TextField(String(localized: "form.description.placeholder"), text: $notes, axis: .vertical)
-                .lineLimit(3...6)
+                .lineLimit(2...6)
+                .focused($focusedField, equals: .notes)
         } header: {
             Text("form.section.description").textCase(nil)
         }
+        .id(MemoryFormField.notes)
     }
 
     private var dateSection: some View {
@@ -335,15 +315,15 @@ struct EditMemoryView: View {
 
     /// Replaces a single photo (the one whose menu was used) with one new pick.
     private func applyReplacement(_ item: PhotosPickerItem?) {
-        guard let item, let index = replaceIndex else { return }
+        guard let item, let id = replaceID else { return }
         Task {
             defer {
                 replaceItem = nil
-                replaceIndex = nil
+                replaceID = nil
             }
             guard let data = try? await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data),
-                  photos.indices.contains(index) else { return }
+                  let index = photos.firstIndex(where: { $0.id == id }) else { return }
             withAnimation(.easeInOut(duration: 0.25)) {
                 if let old = photos[index].fileName {
                     removedFileNames.append(old)
@@ -353,8 +333,8 @@ struct EditMemoryView: View {
         }
     }
 
-    private func removePhoto(at index: Int) {
-        guard photos.indices.contains(index) else { return }
+    private func removePhoto(_ photo: EditablePhoto) {
+        guard let index = photos.firstIndex(where: { $0.id == photo.id }) else { return }
         withAnimation(.easeInOut(duration: 0.25)) {
             if let old = photos[index].fileName {
                 removedFileNames.append(old)
@@ -369,40 +349,55 @@ struct EditMemoryView: View {
         guard !photos.isEmpty else { return }
         isSaving = true
 
-        var saved: [(name: String, cropX: CGFloat, cropY: CGFloat)] = []
-        for photo in photos {
-            if let existing = photo.fileName {
-                saved.append((existing, photo.cropX, photo.cropY))
-            } else if let newName = LocalStore.shared.saveImage(photo.image) {
-                saved.append((newName, photo.cropX, photo.cropY))
+        let current = photos
+        let removed = removedFileNames
+        Task {
+            // Only the newly picked photos need encoding — the existing ones
+            // keep their file — and that encoding stays off the main thread.
+            let newImages = current.filter { $0.fileName == nil }.map(\.image)
+            let newNames = await Task.detached(priority: .userInitiated) {
+                newImages.map { LocalStore.shared.saveImage($0) }
+            }.value
+
+            var newNameIterator = newNames.makeIterator()
+            var saved: [(name: String, cropX: CGFloat, cropY: CGFloat)] = []
+            for photo in current {
+                if let existing = photo.fileName {
+                    saved.append((existing, photo.cropX, photo.cropY))
+                } else if let newName = newNameIterator.next() ?? nil {
+                    saved.append((newName, photo.cropX, photo.cropY))
+                }
             }
+
+            guard let first = saved.first else {
+                isSaving = false
+                showSaveError = true
+                return
+            }
+
+            let deletions = removed
+            Task.detached(priority: .utility) {
+                for fileName in deletions {
+                    LocalStore.shared.deleteImage(named: fileName)
+                }
+            }
+
+            memory.imageFileName = first.name
+            memory.cropOffsetX = Double(first.cropX)
+            memory.cropOffsetY = Double(first.cropY)
+            memory.extraImageFileNames = saved.dropFirst().map(\.name)
+            memory.extraCropOffsetsX = saved.dropFirst().map { Double($0.cropX) }
+            memory.extraCropOffsetsY = saved.dropFirst().map { Double($0.cropY) }
+            memory.message = name
+            memory.notes = notes
+            memory.date = date
+            memory.tag = selectedCategory.rawValue
+
+            // Persist immediately so ContentView's save observer mirrors the edit
+            // to the widget and watch without waiting for an autosave.
+            try? memory.modelContext?.save()
+
+            dismiss()
         }
-
-        guard let first = saved.first else {
-            isSaving = false
-            showSaveError = true
-            return
-        }
-
-        for fileName in removedFileNames {
-            LocalStore.shared.deleteImage(named: fileName)
-        }
-
-        memory.imageFileName = first.name
-        memory.cropOffsetX = Double(first.cropX)
-        memory.cropOffsetY = Double(first.cropY)
-        memory.extraImageFileNames = saved.dropFirst().map(\.name)
-        memory.extraCropOffsetsX = saved.dropFirst().map { Double($0.cropX) }
-        memory.extraCropOffsetsY = saved.dropFirst().map { Double($0.cropY) }
-        memory.message = name
-        memory.notes = notes
-        memory.date = date
-        memory.tag = selectedCategory.rawValue
-
-        // Persist immediately so ContentView's save observer mirrors the edit
-        // to the widget and watch without waiting for an autosave.
-        try? memory.modelContext?.save()
-
-        dismiss()
     }
 }

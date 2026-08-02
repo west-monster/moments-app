@@ -2,7 +2,8 @@ import Foundation
 import UIKit
 import WatchConnectivity
 
-/// Mirrors the memory library to the paired Apple Watch.
+/// Mirrors the favorited memories to the paired Apple Watch — the watch is a
+/// glanceable shortlist, not the whole library (see `sync`).
 ///
 /// The watch has no access to the iPhone's App Group, so data travels over
 /// WatchConnectivity through three complementary channels:

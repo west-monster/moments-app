@@ -11,6 +11,10 @@ struct V_AppApp: App {
 
     /// Solid white bottom bars instead of the iOS 26 liquid-glass material, so
     /// the tab bar / toolbar match the flat pill look on iOS 18 and 26 alike.
+    ///
+    /// Page dots are set here too: `UIPageControl.appearance()` is process-wide
+    /// state, and doing it from `MemoryDetailView.init` re-applied it on every
+    /// body evaluation of a view that only happens to contain a pager.
     private static func configureBars() {
         let tab = UITabBarAppearance()
         tab.configureWithOpaqueBackground()
@@ -25,6 +29,10 @@ struct V_AppApp: App {
         toolbar.shadowColor = UIColor.black.withAlphaComponent(0.08)
         UIToolbar.appearance().standardAppearance = toolbar
         UIToolbar.appearance().scrollEdgeAppearance = toolbar
+
+        // Native page dots tinted with the app accent.
+        UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(AppTheme.accent)
+        UIPageControl.appearance().pageIndicatorTintColor = UIColor(AppTheme.accent).withAlphaComponent(0.25)
     }
 
     var sharedModelContainer: ModelContainer = {

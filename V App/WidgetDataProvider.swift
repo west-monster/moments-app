@@ -7,6 +7,26 @@ enum WidgetDataProvider {
     private static let metadataFileName = "widget_memories.json"
     private static let thumbnailsDirName = "WidgetThumbnails"
     private static let thumbnailSize: CGFloat = 300
+    /// Most recent memories mirrored to the widget. The widget shows one at a
+    /// time, so rendering and pruning a thumbnail per memory in the whole
+    /// library — on every save — was work nothing could ever display.
+    private static let maxMemories = 30
+    /// Source resolution decoded to cut each thumbnail from. Enough that the
+    /// short side still clears `thumbnailSize` on any normal aspect ratio,
+    /// without decoding a 12MP photo to produce 300 pixels — that also pushed
+    /// full-resolution images into the shared cache and evicted the downscaled
+    /// variants the UI was using. Matches the feed card's size, so the two
+    /// share a cache entry.
+    private static let sourceMaxPixel: CGFloat = 1200
+
+    /// Serialises rebuilds. `update` fires on launch, on every save and on
+    /// backgrounding, and two concurrent rebuilds enumerate and prune the same
+    /// thumbnails directory — one could delete the files the other had just
+    /// written for a memory it hadn't seen yet.
+    private static let rebuildQueue = DispatchQueue(
+        label: "axo.V-App.WidgetDataProvider.rebuild",
+        qos: .utility
+    )
 
     /// Plain-value snapshot of a `Memory` so the heavy work can run off the
     /// main actor without touching SwiftData-bound model objects.
@@ -23,7 +43,7 @@ enum WidgetDataProvider {
     /// are regenerated, so adding/removing a memory no longer re-renders the
     /// whole library on the main thread.
     static func update(with memories: [Memory]) {
-        let snapshots = memories.map {
+        let snapshots = memories.prefix(maxMemories).map {
             MemorySnapshot(
                 message: $0.message,
                 memoryDate: $0.formattedDate,
@@ -32,7 +52,7 @@ enum WidgetDataProvider {
                 cropOffsetY: $0.cropOffsetY
             )
         }
-        Task.detached(priority: .utility) {
+        rebuildQueue.async {
             rebuild(from: snapshots)
         }
     }
@@ -56,7 +76,10 @@ enum WidgetDataProvider {
                 let dest = thumbnailsURL.appendingPathComponent(name)
 
                 if !fm.fileExists(atPath: dest.path),
-                   let source = LocalStore.shared.loadImage(named: snapshot.sourceFileName),
+                   let source = LocalStore.shared.loadDownscaledImage(
+                       named: snapshot.sourceFileName,
+                       maxPixel: sourceMaxPixel
+                   ),
                    let data = makeThumbnail(source, cropX: snapshot.cropOffsetX, cropY: snapshot.cropOffsetY) {
                     try? data.write(to: dest, options: .atomic)
                 }

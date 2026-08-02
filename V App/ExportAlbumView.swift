@@ -9,17 +9,35 @@ struct ExportAlbumView: View {
     @State private var includeUntagged = true
     @State private var isExporting = false
     @State private var appeared = false
+    /// `onAppear` fires again whenever the view comes back (returning from the
+    /// share sheet, for one), and seeding the default selection there each time
+    /// wiped out whatever the user had picked.
+    @State private var didSeedSelection = false
 
     private var usedTags: [MemoryTag] {
         let tags = Set(memories.compactMap { MemoryTag(rawValue: $0.tag) }.filter { $0 != .none })
         return MemoryTag.allCases.filter { tags.contains($0) }
     }
 
+    /// Memories with no category — or with one that no longer maps to a known
+    /// `MemoryTag`. Both belong under "Uncategorized": an unrecognised tag gets
+    /// no row of its own, so matching on the raw string alone dropped it from
+    /// every export, "Select all" included, with nothing on screen to say so.
+    private func isUntagged(_ memory: Memory) -> Bool {
+        // Spelled out rather than `?? .none`: there, `.none` binds to
+        // `Optional.none` and the check collapses to "is nil", which would let
+        // genuinely uncategorised memories fall through as tagged.
+        guard let tag = MemoryTag(rawValue: memory.tag) else { return true }
+        return tag == .none
+    }
+
+    private var untaggedCount: Int {
+        memories.filter(isUntagged).count
+    }
+
     private var filteredMemories: [Memory] {
         memories.filter { m in
-            if m.tag.isEmpty {
-                return includeUntagged
-            }
+            if isUntagged(m) { return includeUntagged }
             return selectedTags.contains(m.tag)
         }
     }
@@ -43,7 +61,7 @@ struct ExportAlbumView: View {
                                 tagRow(
                                     icon: "tag",
                                     label: String(localized: "export.uncategorized"),
-                                    count: memories.filter { $0.tag.isEmpty }.count,
+                                    count: untaggedCount,
                                     isSelected: includeUntagged
                                 )
                             }
@@ -150,7 +168,10 @@ struct ExportAlbumView: View {
             }
             .opacity(appeared ? 1 : 0)
             .onAppear {
-                selectedTags = Set(usedTags.map(\.rawValue))
+                if !didSeedSelection {
+                    didSeedSelection = true
+                    selectedTags = Set(usedTags.map(\.rawValue))
+                }
                 withAnimation(.easeOut(duration: 0.4)) { appeared = true }
             }
         }

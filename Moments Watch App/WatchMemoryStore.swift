@@ -51,9 +51,30 @@ final class WatchMemoryStore: NSObject, ObservableObject, WCSessionDelegate {
            let stored = try? JSONDecoder().decode([WatchMemory].self, from: data) {
             memories = stored.sorted { $0.order > $1.order }
         }
-        for memory in memories {
-            if let image = UIImage(contentsOfFile: imageURL(for: memory.id).path) {
-                images[memory.id] = image
+        loadCachedImages()
+    }
+
+    /// Decodes the cached photos off the main thread. Doing it inline in `init`
+    /// meant up to `maxMemories` JPEG decodes before the watch app could draw
+    /// its first frame.
+    private func loadCachedImages() {
+        let paths = memories.map { (id: $0.id, path: imageURL(for: $0.id).path) }
+        guard !paths.isEmpty else { return }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var decoded: [String: UIImage] = [:]
+            for entry in paths {
+                if let image = UIImage(contentsOfFile: entry.path) {
+                    decoded[entry.id] = image
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // Merge rather than assign: photos pushed from the phone while
+                // this was decoding must not be dropped.
+                for (id, image) in decoded where self.images[id] == nil {
+                    self.images[id] = image
+                }
             }
         }
     }

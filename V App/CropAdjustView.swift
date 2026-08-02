@@ -2,8 +2,12 @@ import SwiftUI
 import UIKit
 
 /// Identifies which photo of a form carousel is being framed.
+///
+/// Carries the photo's own id, not its position: the grid can be reordered by
+/// drag while the crop editor is open, and a stored index would then point at
+/// whichever photo had slid into that slot.
 struct PhotoCropTarget: Identifiable {
-    let id: Int
+    let id: UUID
 }
 
 /// Drag-and-drop reordering for a grid of identifiable items. As the dragged
@@ -31,23 +35,6 @@ struct PhotoReorderDropDelegate<Item: Identifiable>: DropDelegate {
     func performDrop(info: DropInfo) -> Bool {
         dragged = nil
         return true
-    }
-}
-
-/// Corner button shown on each carousel photo to open the crop editor.
-struct PhotoCropButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "crop")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 32, height: 32)
-                .background(.black.opacity(0.5), in: Circle())
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
-        }
     }
 }
 

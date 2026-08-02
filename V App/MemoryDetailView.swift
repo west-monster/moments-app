@@ -4,31 +4,43 @@ import UIKit
 
 struct MemoryDetailView: View {
     @Query(sort: \Memory.order, order: .reverse) private var allMemories: [Memory]
-    let startIndex: Int
+    let startID: PersistentIdentifier
+    /// The tab the memory was opened from — the pager reproduces exactly the
+    /// set that tab was showing, in the same order.
+    let scope: AppTab
     let filterTag: MemoryTag
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
-    @State private var currentIndex: Int
+    /// The page is tracked by the memory's own identity, not by its position.
+    ///
+    /// With an `Int` position the `TabView`'s selection silently stopped
+    /// updating — the tag type has to match the identity the `ForEach` uses, and
+    /// that is `persistentModelID`. Swiping moved the page visually while the
+    /// binding stayed on the memory you opened, so Edit, Share and Delete all
+    /// acted on the wrong one. Identity also survives the array shifting under a
+    /// delete, which an index does not.
+    @State private var currentID: PersistentIdentifier
     @State private var showDeleteConfirmation = false
     @State private var showEditSheet = false
     @State private var showShareSheet = false
 
-    init(startIndex: Int, filterTag: MemoryTag = .none) {
-        self.startIndex = startIndex
+    init(startID: PersistentIdentifier, scope: AppTab = .library, filterTag: MemoryTag = .none) {
+        self.startID = startID
+        self.scope = scope
         self.filterTag = filterTag
-        _currentIndex = State(initialValue: startIndex)
-
-        // Native page dots tinted with the system accent.
-        UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(AppTheme.accent)
-        UIPageControl.appearance().pageIndicatorTintColor = UIColor(AppTheme.accent).withAlphaComponent(0.25)
+        _currentID = State(initialValue: startID)
     }
 
-    /// The memories the pager swipes through — kept in sync with the feed's
-    /// active tag filter so it shows the same set the user tapped from.
+    /// The memories the pager swipes through — the same set, in the same order,
+    /// that the tab the user tapped from was showing.
     private var memories: [Memory] {
-        if filterTag == .none { return allMemories }
-        return allMemories.filter { $0.tag == filterTag.rawValue }
+        scope.memories(from: allMemories, tag: filterTag)
+    }
+
+    /// The memory currently on screen; what Edit, Share and Delete act on.
+    private var currentMemory: Memory? {
+        memories.first { $0.persistentModelID == currentID }
     }
 
     var body: some View {
@@ -40,8 +52,8 @@ struct MemoryDetailView: View {
                     // One photo size for every page, measured once here, so the
                     // band is identical across memories.
                     let side = min(geo.size.width, geo.size.height * 0.58)
-                    TabView(selection: $currentIndex) {
-                        ForEach(Array(memories.enumerated()), id: \.element.persistentModelID) { index, memory in
+                    TabView(selection: $currentID) {
+                        ForEach(memories, id: \.persistentModelID) { memory in
                             MemoryPageView(
                                 memory: memory,
                                 photoSide: side,
@@ -49,7 +61,7 @@ struct MemoryDetailView: View {
                                 onEdit: { showEditSheet = true },
                                 onDelete: { showDeleteConfirmation = true }
                             )
-                            .tag(index)
+                            .tag(memory.persistentModelID)
                         }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
@@ -72,14 +84,14 @@ struct MemoryDetailView: View {
             Button(String(localized: "form.cancel"), role: .cancel) {}
         }
         .sheet(isPresented: $showEditSheet) {
-            if currentIndex < memories.count {
-                EditMemoryView(memory: memories[currentIndex])
+            if let memory = currentMemory {
+                EditMemoryView(memory: memory)
                     .presentationSizing(.page)
             }
         }
         .sheet(isPresented: $showShareSheet) {
-            if currentIndex < memories.count {
-                ShareCardView(memory: memories[currentIndex])
+            if let memory = currentMemory {
+                ShareCardView(memory: memory)
                     .presentationSizing(.page)
             }
         }
@@ -88,24 +100,40 @@ struct MemoryDetailView: View {
     // MARK: - Delete
 
     private func deleteMemory() {
-        guard currentIndex < memories.count else { return }
-        let memory = memories[currentIndex]
-        // Counted before the delete: reading `memories` afterwards depends on
-        // whether the @Query has already refreshed, which isn't guaranteed
-        // within this call and left the pager on a stale index.
-        let remaining = memories.count - 1
+        let list = memories
+        guard let index = list.firstIndex(where: { $0.persistentModelID == currentID }) else { return }
+        let memory = list[index]
+        let fileNames = memory.allImageFileNames
 
-        for name in memory.allImageFileNames {
+        // Resolved before the delete: reading `memories` afterwards depends on
+        // whether the @Query has already refreshed, which isn't guaranteed
+        // within this call. The page moves to the memory that slides into this
+        // slot, or back one when this was the last.
+        let successor = index + 1 < list.count ? list[index + 1] : (index > 0 ? list[index - 1] : nil)
+        let successorID = successor?.persistentModelID
+
+        modelContext.delete(memory)
+        // Persisted before the photos leave disk. Relying on the autosave meant
+        // a suspend in between left the memory in the store with its images
+        // already gone — a card that could never render again.
+        do {
+            try modelContext.save()
+        } catch {
+            // The row survived, so its photos have to as well.
+            modelContext.rollback()
+            return
+        }
+
+        for name in fileNames {
             LocalStore.shared.deleteImage(named: name)
         }
-        modelContext.delete(memory)
 
-        if remaining <= 0 {
+        guard let successorID else {
             dismiss()
-        } else if currentIndex > remaining - 1 {
-            withAnimation {
-                currentIndex = remaining - 1
-            }
+            return
+        }
+        withAnimation {
+            currentID = successorID
         }
     }
 }
@@ -123,7 +151,17 @@ private struct MemoryPageView: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
 
-    @State private var images: [UIImage] = []
+    /// A decoded photo together with the crop stored for it. The crop travels
+    /// with the image instead of being looked up by position: a photo whose file
+    /// fails to decode is dropped from this array, so its index no longer lines
+    /// up with `memory.allImageFileNames` and every later photo would be framed
+    /// with its neighbour's crop.
+    private struct LoadedPhoto {
+        let image: UIImage
+        let crop: CGPoint
+    }
+
+    @State private var photos: [LoadedPhoto] = []
     @State private var photoIndex = 0
 
     /// Reserved height for the native page dots below the photo, kept even for
@@ -156,12 +194,16 @@ private struct MemoryPageView: View {
         // carousel; the model ID doesn't change when the photos do.
         .task(id: memory.allImageFileNames) {
             let names = memory.allImageFileNames
+            let crops = names.indices.map { memory.cropOffset(at: $0) }
             let loaded = await Task.detached(priority: .userInitiated) {
                 // Downsampled so a full carousel of large photos can't exhaust
-                // memory and drop the later ones.
-                names.compactMap { LocalStore.shared.loadDownscaledImage(named: $0, maxPixel: 1400) }
+                // memory and drop the later ones. The source index is carried
+                // through so the crop can be matched back to the right photo.
+                names.enumerated().compactMap { index, name -> (UIImage, Int)? in
+                    LocalStore.shared.loadDownscaledImage(named: name, maxPixel: 1400).map { ($0, index) }
+                }
             }.value
-            images = loaded
+            photos = loaded.map { LoadedPhoto(image: $0.0, crop: crops[$0.1]) }
             photoIndex = 0
         }
     }
@@ -247,16 +289,16 @@ private struct MemoryPageView: View {
     private var photoCarousel: some View {
         let side = photoSide
         Group {
-            if images.count > 1 {
+            if photos.count > 1 {
                 TabView(selection: $photoIndex) {
-                    ForEach(Array(images.enumerated()), id: \.offset) { index, img in
-                        photoPage(croppedPhoto(img, index: index, side: side))
+                    ForEach(Array(photos.enumerated()), id: \.offset) { index, photo in
+                        photoPage(croppedPhoto(photo, side: side))
                             .tag(index)
                     }
                 }
                 .tabViewStyle(.page)
-            } else if let uiImage = images.first {
-                photoPage(croppedPhoto(uiImage, index: 0, side: side))
+            } else if let photo = photos.first {
+                photoPage(croppedPhoto(photo, side: side))
             } else {
                 photoPage(
                     Rectangle()
@@ -281,8 +323,9 @@ private struct MemoryPageView: View {
     /// Aspect-fills the full-width band using the crop stored for the photo, so
     /// the framing matches the rest of the app. No corner radius — the band
     /// runs edge to edge.
-    private func croppedPhoto(_ img: UIImage, index: Int, side: CGFloat) -> some View {
-        let position = memory.cropOffset(at: index)
+    private func croppedPhoto(_ photo: LoadedPhoto, side: CGFloat) -> some View {
+        let img = photo.image
+        let position = photo.crop
         return GeometryReader { geo in
             let scale = max(geo.size.width / max(img.size.width, 1),
                             geo.size.height / max(img.size.height, 1))

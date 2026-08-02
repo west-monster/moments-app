@@ -27,7 +27,7 @@ enum PDFExporter {
     private static let footerHeight: CGFloat = 18
     private static let gutter: CGFloat = 8
     /// Photos on one page before the rest flow onto a continuation page.
-    private static let photosPerPage = 6
+    private static let photosPerPage = 4
 
     /// Printable area, footer excluded.
     private static var contentRect: CGRect {
@@ -67,15 +67,33 @@ enum PDFExporter {
         let crop: CGPoint
     }
 
+    /// Decode sizes for the print. Full-resolution decodes were ruinous here:
+    /// `load` holds every photo of one memory at once, so a memory at the
+    /// `MemoryLimits.maxPhotos` cap meant twenty ~50 MB bitmaps live together —
+    /// roughly a gigabyte, enough for the system to kill the app mid-export.
+    ///
+    /// These are sized for the page, not the sensor. The cover hero fills 595 ×
+    /// 488 pt and a grid cell is at most 515 pt wide, so at 2000 / 1600 px the
+    /// print still resolves well past 200 dpi while each bitmap costs a fraction
+    /// of the original.
+    private static let coverMaxPixel: CGFloat = 2000
+    private static let photoMaxPixel: CGFloat = 1600
+
+    private static func decode(_ name: String, maxPixel: CGFloat) -> UIImage? {
+        // Not cached: an album's worth of print-sized decodes would evict every
+        // thumbnail the feed and carousel are holding.
+        LocalStore.shared.loadDownscaledImage(named: name, maxPixel: maxPixel, caching: false)
+    }
+
     private static func loadFirst(_ snapshot: PDFMemorySnapshot) -> LoadedPhoto? {
         guard let name = snapshot.imageFileNames.first,
-              let image = LocalStore.shared.loadImage(named: name) else { return nil }
+              let image = decode(name, maxPixel: coverMaxPixel) else { return nil }
         return LoadedPhoto(image: image, crop: snapshot.crops.first ?? CGPoint(x: 0.5, y: 0.5))
     }
 
     private static func load(_ snapshot: PDFMemorySnapshot) -> [LoadedPhoto] {
         snapshot.imageFileNames.enumerated().compactMap { index, name in
-            guard let image = LocalStore.shared.loadImage(named: name) else { return nil }
+            guard let image = decode(name, maxPixel: photoMaxPixel) else { return nil }
             let crop = snapshot.crops.indices.contains(index)
                 ? snapshot.crops[index]
                 : CGPoint(x: 0.5, y: 0.5)
@@ -148,7 +166,12 @@ enum PDFExporter {
         }
 
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+        // Fixed locale: the format is a file name, not something to localize —
+        // a non-Gregorian calendar would otherwise produce a surprising one.
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        // Down to the minute, so two exports on the same day are separate files
+        // instead of the second silently overwriting the first.
+        formatter.dateFormat = "yyyy-MM-dd-HHmm"
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("Moments-\(formatter.string(from: Date())).pdf")
         do {
@@ -167,11 +190,13 @@ enum PDFExporter {
         var y: CGFloat
 
         if let hero {
-            let heroHeight = pageSize.height * 0.58
+            // Square like everything else, so the cover shows the same framing
+            // the memory has on screen. Full-bleed, so it still reads as a hero.
+            let heroHeight = pageSize.width
             drawFilled(ctx, image: hero.image, crop: hero.crop,
                        in: CGRect(x: 0, y: 0, width: pageSize.width, height: heroHeight),
                        cornerRadius: 0)
-            y = heroHeight + 54
+            y = heroHeight + 44
         } else {
             y = pageSize.height * 0.36
         }
@@ -224,8 +249,8 @@ enum PDFExporter {
 
         let photoHeight = max(content.height - caption.height - 28, content.height * 0.45)
         let photoRect = CGRect(x: content.minX, y: content.minY, width: content.width, height: photoHeight)
-        drawGrid(ctx, photos: photos, in: photoRect)
-        drawCaption(ctx, caption, top: photoRect.maxY + 28, in: content, accent: accent)
+        let used = drawGrid(ctx, photos: photos, in: photoRect)
+        drawCaption(ctx, caption, top: used.maxY + 28, in: content, accent: accent)
     }
 
     /// Two single-photo memories stacked on one sheet, split by a hairline.
@@ -261,8 +286,8 @@ enum PDFExporter {
 
         let photoHeight = max(rect.height - caption.height - 18, rect.height * 0.4)
         let photoRect = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: photoHeight)
-        drawGrid(ctx, photos: photos, in: photoRect)
-        drawCaption(ctx, caption, top: photoRect.maxY + 18, in: rect, accent: accent)
+        let used = drawGrid(ctx, photos: photos, in: photoRect)
+        drawCaption(ctx, caption, top: used.maxY + 18, in: rect, accent: accent)
     }
 
     /// Continuation sheet: a small caption naming the memory, then the rest of
@@ -308,52 +333,63 @@ enum PDFExporter {
 
     // MARK: - Photo grid
 
-    /// Bounds on how far a cell may depart from a square. Cells are aspect-
-    /// filled, so an extreme cell doesn't stretch the photo — it crops it to a
-    /// sliver, which is worse. Two photos therefore stack as wide bands rather
-    /// than splitting into two tall columns.
-    private static let minCellAspect: CGFloat = 0.62
-    private static let maxCellAspect: CGFloat = 1.35
-
+    /// Photos print square, the same frame the app shows them in.
+    ///
+    /// `cropOffsetX/Y` is defined as a position inside a *square* crop — it is
+    /// what the user set in `CropAdjustView`, and what the feed card, the form
+    /// thumbnails and the widget all render. Printing into a free-aspect cell
+    /// aspect-filled that cell instead, so the page showed a different slice of
+    /// the photo than every screen in the app did.
+    /// At most `photosPerPage` photos ever reach here, so in practice this is
+    /// one or two columns; the last case only guards a future rise in the cap.
     private static func columnCount(for count: Int) -> Int {
         switch count {
-        case 1, 2: return 1
-        default: return 2
+        case 1: return 1
+        case 2, 3, 4: return 2
+        default: return 3
         }
     }
 
-    /// Cells filling `rect`, clamped to a printable aspect and centred in the
-    /// band when the clamp leaves room. An odd photo on the last row spans the
-    /// full width so a page never ends on a gap.
+    /// Square cells laid out in `rect`, sized to fit in both directions and
+    /// centred. A short last row is centred too, rather than leaving a hole on
+    /// the right.
     private static func cellRects(count: Int, in rect: CGRect) -> [CGRect] {
         guard count > 0, rect.width > 0, rect.height > 0 else { return [] }
         let columns = columnCount(for: count)
         let rows = Int(ceil(Double(count) / Double(columns)))
-        let cellWidth = (rect.width - gutter * CGFloat(columns - 1)) / CGFloat(columns)
 
-        let available = (rect.height - gutter * CGFloat(rows - 1)) / CGFloat(rows)
-        let cellHeight = min(max(available, cellWidth * minCellAspect), cellWidth * maxCellAspect)
+        // The side has to satisfy both axes, so the grid can never overflow the
+        // band — with a fixed aspect the height is no longer free to absorb it.
+        let byWidth = (rect.width - gutter * CGFloat(columns - 1)) / CGFloat(columns)
+        let byHeight = (rect.height - gutter * CGFloat(rows - 1)) / CGFloat(rows)
+        let side = max(min(byWidth, byHeight), 0)
 
-        let gridHeight = cellHeight * CGFloat(rows) + gutter * CGFloat(rows - 1)
+        let gridHeight = side * CGFloat(rows) + gutter * CGFloat(rows - 1)
         let top = rect.minY + max(0, (rect.height - gridHeight) / 2)
 
         return (0..<count).map { index in
             let row = index / columns
             let column = index % columns
-            let y = top + CGFloat(row) * (cellHeight + gutter)
-            let isOddLast = index == count - 1 && count % columns == 1 && columns > 1
-            if isOddLast {
-                return CGRect(x: rect.minX, y: y, width: rect.width, height: cellHeight)
-            }
-            return CGRect(x: rect.minX + CGFloat(column) * (cellWidth + gutter),
-                          y: y, width: cellWidth, height: cellHeight)
+            let itemsInRow = min(columns, count - row * columns)
+            let rowWidth = side * CGFloat(itemsInRow) + gutter * CGFloat(itemsInRow - 1)
+            let left = rect.minX + (rect.width - rowWidth) / 2
+            return CGRect(x: left + CGFloat(column) * (side + gutter),
+                          y: top + CGFloat(row) * (side + gutter),
+                          width: side, height: side)
         }
     }
 
-    private static func drawGrid(_ ctx: CGContext, photos: [LoadedPhoto], in rect: CGRect) {
-        for (cell, photo) in zip(cellRects(count: photos.count, in: rect), photos) {
+    /// Draws the grid and reports the bounds it actually used, so the caption
+    /// can sit under the photos instead of under the whole band — square cells
+    /// rarely fill it, and anchoring to the band left a visible gap.
+    @discardableResult
+    private static func drawGrid(_ ctx: CGContext, photos: [LoadedPhoto], in rect: CGRect) -> CGRect {
+        let cells = cellRects(count: photos.count, in: rect)
+        for (cell, photo) in zip(cells, photos) {
             drawFilled(ctx, image: photo.image, crop: photo.crop, in: cell)
         }
+        let used = cells.reduce(CGRect.null) { $0.union($1) }
+        return used.isNull ? CGRect(x: rect.midX, y: rect.midY, width: 0, height: 0) : used
     }
 
     /// Aspect-fills `rect` and clips, positioning the overflow with the crop

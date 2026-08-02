@@ -5,8 +5,27 @@ import Combine
 
 /// Bottom tab bar sections. Favorites sits leftmost, but Library is the
 /// default landing tab so the app never opens on an empty favorites screen.
-private enum AppTab {
+///
+/// Also owns the set each section shows, so the feed and the detail pager read
+/// it from one place instead of each deriving its own.
+enum AppTab {
     case favorites, library, timeline
+
+    /// The memories this section shows, in the order it shows them. `all` is
+    /// the library sorted by `order`, newest first.
+    ///
+    /// The detail pager used to re-derive its own list from the tag alone, so
+    /// opening a memory from Favorites let you swipe straight into memories the
+    /// tab wasn't showing, and opening one from Timeline paged by `order`
+    /// instead of by date.
+    func memories(from all: [Memory], tag: MemoryTag) -> [Memory] {
+        let tagged = tag == .none ? all : all.filter { $0.tag == tag.rawValue }
+        switch self {
+        case .favorites: return tagged.filter(\.isFavorite)
+        case .library: return tagged
+        case .timeline: return tagged.sorted { $0.date > $1.date }
+        }
+    }
 }
 
 /// A year's worth of memories in the timeline layout, split into months.
@@ -39,23 +58,22 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \Memory.order, order: .reverse) private var memories: [Memory]
 
-    @AppStorage("hasLaunchedBefore") private var hasLaunchedBefore = false
     @State private var showSplash = true
     @State private var showAddSheet = false
-    @State private var selectedIndex: Int?
-    @State private var isFirstLaunch = true
+    /// The memory the detail sheet is showing, by identity — positions shift
+    /// under deletes and filter changes, identities don't.
+    @State private var selectedID: PersistentIdentifier?
     @State private var selectedTag: MemoryTag = .none
     @State private var showExport = false
     @State private var selectedTab: AppTab = .library
 
     private var filteredMemories: [Memory] {
-        if selectedTag == .none { return memories }
-        return memories.filter { $0.tag == selectedTag.rawValue }
+        AppTab.library.memories(from: memories, tag: selectedTag)
     }
 
     /// Favorited memories within the active category filter.
     private var favoriteMemories: [Memory] {
-        filteredMemories.filter { $0.isFavorite }
+        AppTab.favorites.memories(from: memories, tag: selectedTag)
     }
 
     var body: some View {
@@ -63,7 +81,7 @@ struct ContentView: View {
             AppTheme.background.ignoresSafeArea()
 
             if showSplash {
-                SplashView(showSplash: $showSplash, isFirstLaunch: isFirstLaunch)
+                SplashView(showSplash: $showSplash)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .zIndex(2)
             } else {
@@ -73,30 +91,26 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 0.6), value: showSplash)
         .onAppear {
-            isFirstLaunch = !hasLaunchedBefore
-            importFromFilesIfNeeded()
-            syncData()
-        }
-        .onChange(of: memories.count) {
+            // When a recovery import runs, its own save triggers the sync. Doing
+            // it here as well would export before the store has settled.
+            if importFromFilesIfNeeded() { return }
             syncData()
         }
         .onChange(of: scenePhase) { _, newValue in
             // Safety net for changes that reach disk without an explicit save
             // (autosaved edits) before the app leaves the foreground.
             if newValue == .background {
-                syncData()
+                // Blocking here: the process can be suspended right after, and
+                // the snapshot has to be on disk by then.
+                syncData(waitUntilDone: true)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { _ in
-            // Mirrors every persisted change (including edits, which don't
-            // alter the memory count) to the widget and watch. Downstream
-            // providers skip work when nothing actually changed.
+            // The single trigger for persisted changes — inserts, deletes and
+            // edits alike, since every mutation site saves explicitly. Pairing
+            // it with an `onChange(of: memories.count)` meant an add or a delete
+            // ran the whole mirror twice, concurrently.
             syncData()
-        }
-        .onChange(of: showSplash) { _, newValue in
-            if !newValue && !hasLaunchedBefore {
-                hasLaunchedBefore = true
-            }
         }
     }
 
@@ -128,11 +142,11 @@ struct ContentView: View {
         }
         .tint(AppTheme.accent)
         .sheet(isPresented: Binding(
-            get: { selectedIndex != nil },
-            set: { if !$0 { selectedIndex = nil } }
+            get: { selectedID != nil },
+            set: { if !$0 { selectedID = nil } }
         )) {
-            if let idx = selectedIndex {
-                MemoryDetailView(startIndex: idx, filterTag: selectedTag)
+            if let id = selectedID {
+                MemoryDetailView(startID: id, scope: selectedTab, filterTag: selectedTag)
             }
         }
         .sheet(isPresented: $showAddSheet) {
@@ -358,7 +372,7 @@ struct ContentView: View {
     /// Filtered memories grouped by year, then by month, newest first.
     private var timelineGroups: [TimelineYearGroup] {
         let calendar = Calendar.current
-        let sorted = filteredMemories.sorted { $0.date > $1.date }
+        let sorted = AppTab.timeline.memories(from: memories, tag: selectedTag)
         let byYear = Dictionary(grouping: sorted) { calendar.component(.year, from: $0.date) }
 
         return byYear.keys.sorted(by: >).map { year in
@@ -404,11 +418,7 @@ struct ContentView: View {
     }
 
     private func selectMemory(_ memory: Memory) {
-        // Index within the filtered set so the detail pager swipes through the
-        // same memories the feed is currently showing.
-        if let index = filteredMemories.firstIndex(where: { $0.persistentModelID == memory.persistentModelID }) {
-            selectedIndex = index
-        }
+        selectedID = memory.persistentModelID
     }
 
     // MARK: - Empty state (only when there are no memories at all)
@@ -471,11 +481,13 @@ struct ContentView: View {
     /// snapshot used when the store comes up empty (e.g. it was reset after a
     /// migration failure — see `V_AppApp`). Reconciling on every launch is
     /// avoided so the two layers can't drift or fight.
-    private func importFromFilesIfNeeded() {
-        guard memories.isEmpty else { return }
+    /// Returns whether anything was restored.
+    @discardableResult
+    private func importFromFilesIfNeeded() -> Bool {
+        guard memories.isEmpty else { return false }
 
         let exported = LocalStore.shared.loadMetadata()
-        guard !exported.isEmpty else { return }
+        guard !exported.isEmpty else { return false }
 
         let formatter = ISO8601DateFormatter()
 
@@ -496,14 +508,33 @@ struct ContentView: View {
             )
             modelContext.insert(memory)
         }
+
+        // Persisting here makes `ModelContext.didSave` fire, which is what
+        // mirrors the restored library out to the snapshot, widget and watch.
+        try? modelContext.save()
+        return true
     }
 
     // MARK: - Sync data to files and widget
 
-    private func syncData() {
-        LocalStore.shared.exportMetadata(from: memories)
-        WidgetDataProvider.update(with: memories)
-        WatchSyncManager.shared.sync(memories)
+    /// Mirrors the library to the recovery snapshot, the widget and the watch.
+    ///
+    /// Reads through an explicit fetch rather than the `@Query` array: `@Query`
+    /// is resolved once per body evaluation, so callers that fire *within* the
+    /// same update as a change (the recovery import, `ModelContext.didSave`) saw
+    /// a stale list. In the import case that meant writing an empty array over
+    /// the very snapshot we had just restored from.
+    private func syncData(waitUntilDone: Bool = false) {
+        let current = currentMemories()
+        LocalStore.shared.exportMetadata(from: current, waitUntilDone: waitUntilDone)
+        WidgetDataProvider.update(with: current)
+        WatchSyncManager.shared.sync(current)
+    }
+
+    private func currentMemories() -> [Memory] {
+        let descriptor = FetchDescriptor<Memory>(sortBy: [SortDescriptor(\.order, order: .reverse)])
+        guard let fetched = try? modelContext.fetch(descriptor) else { return memories }
+        return fetched
     }
 }
 
@@ -536,20 +567,12 @@ struct CategoryChips: View {
     }
 
     private func chip(_ category: MemoryTag) -> some View {
-        let isSelected = selected == category
-        return Button {
+        CategoryChip(
+            label: category == .none ? String(localized: "filter.all") : category.label,
+            isSelected: selected == category
+        ) {
             withAnimation(.easeInOut(duration: 0.2)) { selected = category }
-        } label: {
-            Text(category == .none ? String(localized: "filter.all") : category.label)
-                .font(.subheadline.weight(isSelected ? .semibold : .medium))
-                .foregroundStyle(isSelected ? .white : .primary)
-                .padding(.horizontal, 15)
-                .padding(.vertical, 7)
-                .background {
-                    Capsule().fill(isSelected ? AppTheme.accent : Color(.systemGray5))
-                }
         }
-        .buttonStyle(.plain)
     }
 }
 

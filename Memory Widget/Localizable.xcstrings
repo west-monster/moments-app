@@ -1,118 +1,118 @@
 {
-  "sourceLanguage": "es",
-  "strings": {
-    "widget.description": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Relive your special moments"
+  "sourceLanguage" : "en",
+  "strings" : {
+    "widget.description" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relive your special moments"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Revive tus momentos especiales"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revive tus momentos especiales"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Revivez vos moments spéciaux"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Revivez vos moments spéciaux"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "特別な瞬間をもう一度"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特別な瞬間をもう一度"
           }
         }
       }
     },
-    "widget.empty": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open the app to create memories"
+    "widget.empty" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open the app to create memories"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Abre la app para crear recuerdos"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abre la app para crear recuerdos"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ouvrez l'app pour créer des souvenirs"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrez l'app pour créer des souvenirs"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "アプリを開いて思い出を作りましょう"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "アプリを開いて思い出を作りましょう"
           }
         }
       }
     },
-    "widget.name": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Moments"
+    "widget.name" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Momentos"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Momentos"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Moments"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Moments"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "モーメンツ"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モーメンツ"
           }
         }
       }
     },
-    "widget.placeholder.message": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A special moment"
+    "widget.placeholder.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A special moment"
           }
         },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Un momento especial"
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un momento especial"
           }
         },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Un moment spécial"
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un moment spécial"
           }
         },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "特別な瞬間"
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "特別な瞬間"
           }
         }
       }
     }
   },
-  "version": "1.0"
+  "version" : "1.0"
 }
