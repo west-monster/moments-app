@@ -9,17 +9,35 @@ struct ExportAlbumView: View {
     @State private var includeUntagged = true
     @State private var isExporting = false
     @State private var appeared = false
+    /// `onAppear` fires again whenever the view comes back (returning from the
+    /// share sheet, for one), and seeding the default selection there each time
+    /// wiped out whatever the user had picked.
+    @State private var didSeedSelection = false
 
     private var usedTags: [MemoryTag] {
         let tags = Set(memories.compactMap { MemoryTag(rawValue: $0.tag) }.filter { $0 != .none })
         return MemoryTag.allCases.filter { tags.contains($0) }
     }
 
+    /// Memories with no category — or with one that no longer maps to a known
+    /// `MemoryTag`. Both belong under "Uncategorized": an unrecognised tag gets
+    /// no row of its own, so matching on the raw string alone dropped it from
+    /// every export, "Select all" included, with nothing on screen to say so.
+    private func isUntagged(_ memory: Memory) -> Bool {
+        // Spelled out rather than `?? .none`: there, `.none` binds to
+        // `Optional.none` and the check collapses to "is nil", which would let
+        // genuinely uncategorised memories fall through as tagged.
+        guard let tag = MemoryTag(rawValue: memory.tag) else { return true }
+        return tag == .none
+    }
+
+    private var untaggedCount: Int {
+        memories.filter(isUntagged).count
+    }
+
     private var filteredMemories: [Memory] {
         memories.filter { m in
-            if m.tag.isEmpty {
-                return includeUntagged
-            }
+            if isUntagged(m) { return includeUntagged }
             return selectedTags.contains(m.tag)
         }
     }
@@ -31,7 +49,7 @@ struct ExportAlbumView: View {
                     VStack(spacing: 20) {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("export.select")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(AppTheme.Font.eyebrow)
                                 .tracking(2)
                                 .foregroundStyle(AppTheme.accent)
 
@@ -43,7 +61,7 @@ struct ExportAlbumView: View {
                                 tagRow(
                                     icon: "tag",
                                     label: String(localized: "export.uncategorized"),
-                                    count: memories.filter { $0.tag.isEmpty }.count,
+                                    count: untaggedCount,
                                     isSelected: includeUntagged
                                 )
                             }
@@ -78,7 +96,7 @@ struct ExportAlbumView: View {
                                 }
                             } label: {
                                 Text("export.selectAll")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AppTheme.Font.chip)
                                     .foregroundStyle(AppTheme.accent)
                             }
 
@@ -91,13 +109,15 @@ struct ExportAlbumView: View {
                                 }
                             } label: {
                                 Text("export.selectNone")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(AppTheme.Font.chip)
                                     .foregroundStyle(AppTheme.textSecondary)
                             }
                         }
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
+                    .frame(maxWidth: AppTheme.Layout.formMaxWidth)
+                    .frame(maxWidth: .infinity)
                 }
 
                 VStack(spacing: 8) {
@@ -106,7 +126,7 @@ struct ExportAlbumView: View {
                         .frame(height: 1)
 
                     Text("export.count \(filteredMemories.count)")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(AppTheme.Font.chip)
                         .foregroundStyle(AppTheme.textSecondary)
                         .padding(.top, 4)
 
@@ -119,13 +139,13 @@ struct ExportAlbumView: View {
                                     .tint(.white)
                             } else {
                                 Image(systemName: "doc.richtext")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(AppTheme.Font.chip)
                             }
                             Text("export.pdf")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.system(.headline, design: .default))
                                 .tracking(0.5)
                         }
-                        .foregroundColor(.white)
+                        .foregroundStyle(filteredMemories.isEmpty ? .white : AppTheme.onAccent)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(filteredMemories.isEmpty ? AppTheme.textSecondary : AppTheme.accent)
@@ -133,6 +153,7 @@ struct ExportAlbumView: View {
                     }
                     .disabled(filteredMemories.isEmpty || isExporting)
                     .padding(.horizontal, 20)
+                    .frame(maxWidth: AppTheme.Layout.formMaxWidth)
                     .padding(.bottom, 8)
                 }
             }
@@ -147,7 +168,10 @@ struct ExportAlbumView: View {
             }
             .opacity(appeared ? 1 : 0)
             .onAppear {
-                selectedTags = Set(usedTags.map(\.rawValue))
+                if !didSeedSelection {
+                    didSeedSelection = true
+                    selectedTags = Set(usedTags.map(\.rawValue))
+                }
                 withAnimation(.easeOut(duration: 0.4)) { appeared = true }
             }
         }
@@ -165,13 +189,13 @@ struct ExportAlbumView: View {
                 .frame(width: 20)
 
             Text(label)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(.body, design: .default).weight(.medium))
                 .foregroundStyle(AppTheme.textPrimary)
 
             Spacer()
 
             Text("\(count)")
-                .font(.system(size: 13, weight: .semibold))
+                .font(AppTheme.Font.caption)
                 .foregroundStyle(AppTheme.textSecondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -189,18 +213,9 @@ struct ExportAlbumView: View {
             let url = PDFExporter.generate(from: snapshots, title: title)
             await MainActor.run {
                 if let url {
-                    let ac = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-                    ac.completionWithItemsHandler = { _, _, _, _ in
+                    ShareHelper.present([url]) {
                         isExporting = false
                         dismiss()
-                    }
-                    if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                       let root = scene.keyWindow?.rootViewController {
-                        var top = root
-                        while let presented = top.presentedViewController { top = presented }
-                        top.present(ac, animated: true)
-                    } else {
-                        isExporting = false
                     }
                 } else {
                     isExporting = false
